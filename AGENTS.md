@@ -33,7 +33,7 @@ Robots identify at boot via `RobotController.getSerialNumber()` (with fallback t
 | **`COMP_2027`** *(Fallback)* | roboRIO 2.0 | • `"Drivetrain"` + `"Mech"` CANivores + `"rio"` | • **3–4x OV9281** on PhotonVision (`ROBORIO_CANIVORE_2026` profile) |
 
 ### Hardware Constraints (NEVER Violate)
-1. **Inline Battery Fuel Gauge (`BFG` `SEN-36005`) on `auxCanBus`:** Wire the 2-pin `BFG` CAN lead strictly to `"rio"` native 1 Mbps CAN 2.0 (`auxCanBus`—never on a CTRE CAN FD CANivore). `BatteryIO.java` decodes 29-bit frames `0x010`, `0x011`, and `0x012`.
+1. **Inline Battery Fuel Gauge (`BFG` `ROB-70001`) on `auxCanBus`:** Wire the 2-pin `BFG` CAN lead strictly to `"rio"` native 1 Mbps CAN 2.0 (`auxCanBus`—never on a CTRE CAN FD CANivore). `BatteryIO.java` decodes little-endian 29-bit frames for Mfg ID `11` (`0x0B`), APIs `0x000`, `0x004`, and `0x01C` (not `SEN-36005` ToF or `0x010–0x012`).
 2. **Swerve Current Limits & `MotionMagicExpoVoltage` Steer Gains:** Enforce **`60.0 A` Stator / `60.0 A` Slip** and **`40.0 A` Supply** current limits on all swerve drive motors (`withSlipCurrent` overwrites `StatorCurrentLimit`), `MotionMagicExpoVoltage` steer gains (`kP = 15.0, kD = 0.9, kS = 0.1, kV = 1.5, MotionMagicExpo_kV = 1.5, MotionMagicExpo_kA = 0.1`), and dual translation/rotation `PiecewiseSensitivity` curves.
 3. **Log Paths & `.hoot` Auto-Logging (`LogFileManager`, `Robot.java`):** Resolve `/U/logs` first, then `new File(Filesystem.getOperatingDirectory(), "logs")`, and keep `SignalLogger.enableAutoLogging(false)` in `Robot.java`.
 

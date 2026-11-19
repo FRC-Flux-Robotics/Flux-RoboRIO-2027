@@ -468,7 +468,8 @@ public class RobotContainer {
     vision.setRobotOrientation(
         drive.getPose().getRotation(),
         drive.getChassisSpeeds().omegaRadiansPerSecond,
-        preMatchCalibrator.isGyroSeeded());
+        preMatchCalibrator.isGyroSeeded(),
+        drive.getMaxTiltRad());
 
     double ghostSupplyAmps =
         ghostSuperstructureActive ? superstructure.getTotalMechanismSupplyCurrentAmps() : 0.0;

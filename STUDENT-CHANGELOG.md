@@ -1,5 +1,10 @@
 # FLUX 10413 — Student Changelog (`STUDENT-CHANGELOG.md`)
 
+## 2026-11-18 — `v2027.1.1` Pinned Vendordep Bump & Shared Core Parity Sync
+* **🔧 What Changed:**
+  * **Vendordep Fixes (`vendordeps/`):** Bumped `photonlib` (`v2026.3.1 -> v2026.3.4`, fixing NT4 disconnects & OOB packet decode) and `AdvantageKit` (`26.0.1 -> 26.0.2`).
+  * **Real Hardware Protocol, PathPlanner & Control-Law Sync (`frc.lib.*`, `Robot.java`, `RobotIdentity.java`):** Synced `BackTo2026Translator` rules, PWF `ROB-70001` little-endian CAN decoding (`Mfg ID 11`), `8.069 m` field width + `SafeAutoBuilder` `Wall/Blue -> CENTER_RED_2027` (`LocalOrigin` preserved on shop templates), `/sys/firmware/devicetree/base/serial-number` + tag fallback, `CanConfigBudget` (`3.0 s` / `50 ms`), `optimizeBusUtilizationForAll(...)`, `FusedCANcoder` Pro/FD fallback + `0.3°` steer deadband, `MAIN_THREAD_RT_PRIORITY = 1`, `REPLAY` CAN skip, and `Vision` yaw-rate/tilt/finite gates.
+
 ## 2026-11-03 — Initial `v2027.1.0` Pre-Kickoff Baseline: 2026 `FUEL` & `CORAL` Robot Code, 3D Autonomous Lab & Student Exercise Kit
 * **🔧 What's Included:**
   * **Shared Core Engine (`frc.lib.*`) + `FUEL` 6-Mechanism Superstructure (`frc.robot.*`):** 250 Hz CTRE Phoenix 6 swerve drivetrain (`Drive`, `ModuleIOTalonFX`, `ModuleIOSim`), full-queue AprilTag vision, `Superstructure` (`Intake`, `Tilter`, `Indexer`, `Feeder`, dual `Shooter`, `Hood`), `ShotCalculator` Shoot-on-the-Move solver, `CORAL`/`CHASSIS_3` Ghost Superstructure mode, `VirtualGeofence`, `FaultSupervisor`, `BatteryIO`, and `FluxFig` CSV configuration (`libs/fluxfig-1.0.0.jar`).

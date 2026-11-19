@@ -6,14 +6,18 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.ctre.phoenix6.StatusCode;
 import edu.wpi.first.hal.HAL;
 import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Pose3d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Rotation3d;
 import edu.wpi.first.math.geometry.Transform3d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.geometry.Translation3d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
+import edu.wpi.first.math.kinematics.SwerveModuleState;
+import edu.wpi.first.wpilibj.Timer;
 import frc.lib.commands.Blitz15MinCmd;
 import frc.lib.commands.DriveCommands;
 import frc.lib.commands.DriveToPose;
@@ -24,6 +28,7 @@ import frc.lib.commands.ShopStressSuiteCmd;
 import frc.lib.commands.ZeroPriorBootstrapCmd;
 import frc.lib.drive.Drive;
 import frc.lib.drive.GyroIO;
+import frc.lib.drive.Module;
 import frc.lib.drive.ModuleIO;
 import frc.lib.drive.ModuleIOSim;
 import frc.lib.drive.PhoenixOdometryThread;
@@ -42,10 +47,14 @@ import frc.lib.util.FieldPositions.CoordinateSystem;
 import frc.lib.util.FieldPositions.FieldProfile;
 import frc.lib.util.LogFileManager;
 import frc.lib.util.LoggedTunableNumber;
+import frc.lib.util.PhoenixUtil;
 import frc.lib.util.PiecewiseSensitivity;
 import frc.lib.util.SafeAutoBuilder;
 import frc.lib.util.VirtualBatterySim;
 import frc.lib.vision.Vision;
+import frc.lib.vision.VisionIO;
+import frc.lib.vision.VisionIO.ObservationType;
+import frc.lib.vision.VisionIO.PoseObservation;
 import frc.lib.vision.VisionIOSim;
 import frc.lib.vision.ZeroPriorBootstrapSolver;
 import frc.lib.vision.ZeroPriorBootstrapSolver.PivotObservationPair;
@@ -526,20 +535,32 @@ public class Tier2DeterministicSolversTest {
     assertEquals("UNKNOWN_BATTERY", batIo.getResolvedBatteryName());
     assertFalse(batIo.isHealthy());
 
-    int serialArbId = BatteryIO.buildBfgArbitrationId(BatteryIO.API_ID_SERIAL, 0);
-    assertTrue(batIo.processCanFrame(serialArbId, BatteryIO.encodeSerialFrame("2026-B02"), 8));
+    int nick1ArbId = BatteryIO.buildBfgArbitrationId(BatteryIO.API_ID_NICKNAME_1, 0);
+    assertEquals(0x0A0B0F00, nick1ArbId);
+    assertTrue(
+        batIo.processCanFrame(nick1ArbId, BatteryIO.encodeNickname1Frame("2026-B02"), 8));
     assertEquals("2026-B02", batIo.getResolvedBatteryName());
 
-    int telemArbId = BatteryIO.buildBfgArbitrationId(BatteryIO.API_ID_TELEMETRY, 0);
+    int powerArbId = BatteryIO.buildBfgArbitrationId(BatteryIO.API_ID_POWER, 0);
     assertTrue(
-        batIo.processCanFrame(
-            telemArbId, BatteryIO.encodeTelemetryFrame(12.640, 18.5, 96.5, 94.0, 15.8), 8));
+        batIo.processCanFrame(powerArbId, BatteryIO.encodePowerFrame(18.5, 12.640, 420.0), 8));
     double bfgDecodeErrMv = Math.abs(batIo.getVoltageVolts() - 12.640) * 1000.0;
     assertEquals(12.640, batIo.getVoltageVolts(), 1e-4);
     assertEquals(18.5, batIo.getCurrentAmps(), 1e-3);
+
+    int socArbId = BatteryIO.buildBfgArbitrationId(BatteryIO.API_ID_STATE_OF_CHARGE, 0);
+    assertTrue(
+        batIo.processCanFrame(
+            socArbId, BatteryIO.encodeStateOfChargeFrame(17370.0, 18000.0, 2, 224.0), 8));
     assertEquals(96.5, batIo.getStateOfChargePct(), 1e-3);
     assertEquals(15.8, batIo.getInternalResistanceMilliOhms(), 1e-3);
     assertTrue(batIo.isHealthy());
+
+    assertTrue(
+        batIo.processCanFrame(powerArbId, BatteryIO.encodePowerFrame(15.0, 12.500, 425.0), 8));
+    assertTrue(
+        batIo.processCanFrame(powerArbId, BatteryIO.encodePowerFrame(115.0, 10.850, 440.0), 8));
+    assertEquals(16.5, batIo.getInternalResistanceMilliOhms(), 0.2);
 
     batIo.simulateCanReading("FLUX-BAT-2026-B01", 12.65, 98.0, 96.0, 15.5);
     assertEquals("2026-B01", batIo.getResolvedBatteryName());
@@ -842,5 +863,140 @@ public class Tier2DeterministicSolversTest {
     assertTrue(
         maxCycleX > 6.5,
         "2-path PathPlanner auto must chain 'Collect.path' out toward centerline (X > 6.5m)");
+  }
+
+  @Test
+  public void testBomRadarOriginConversionIdentityBudgetVisionAndDeadband() throws Exception {
+    assertEquals(8.069, FieldPositions.FIELD_WIDTH_METERS, 1e-6);
+
+    CoordinateSystem savedCoord = FieldPositions.getCoordinateSystem();
+    try {
+      FieldPositions.setCoordinateSystem(CoordinateSystem.CENTER_RED_2027);
+      Pose2d shopStart = SafeAutoBuilder.getPathStartingPose("Shop_Center_Shuttle").orElseThrow();
+      assertEquals(0.0, shopStart.getX(), 1e-4, "LocalOrigin shop path must stay at (0,0)");
+      assertEquals(0.0, shopStart.getY(), 1e-4);
+
+      Pose2d compHubStart = SafeAutoBuilder.getPathStartingPose("Hub to Depot").orElseThrow();
+      Pose2d expectedCompStart =
+          FieldPositions.wallBlueToCenterRed(new Pose2d(3.10, 4.05, Rotation2d.kZero));
+      assertEquals(expectedCompStart.getX(), compHubStart.getX(), 1e-3);
+      assertEquals(expectedCompStart.getY(), compHubStart.getY(), 1e-3);
+      assertEquals(Math.PI, Math.abs(compHubStart.getRotation().getRadians()), 1e-3);
+    } finally {
+      FieldPositions.setCoordinateSystem(savedCoord);
+    }
+
+    Path tmpDir = Files.createTempDirectory("flux-id-test");
+    try {
+      Path devSerial = tmpDir.resolve("serial-number");
+      Path deployTag = tmpDir.resolve("deploy-id.txt");
+      Path persistTag = tmpDir.resolve("persist-id.txt");
+      Files.writeString(devSerial, "PRACTICE_2027\0");
+      assertEquals(
+          RobotIdentity.PRACTICE_2027,
+          RobotIdentity.detect("", "", devSerial, deployTag, persistTag));
+      Files.deleteIfExists(devSerial);
+      Files.writeString(persistTag, "PRACTICE_2027\n");
+      assertEquals(
+          RobotIdentity.PRACTICE_2027,
+          RobotIdentity.detect("ABCDEF", "", devSerial, deployTag, persistTag));
+    } finally {
+      Files.deleteIfExists(tmpDir.resolve("serial-number"));
+      Files.deleteIfExists(tmpDir.resolve("deploy-id.txt"));
+      Files.deleteIfExists(tmpDir.resolve("persist-id.txt"));
+      Files.deleteIfExists(tmpDir);
+    }
+
+    PhoenixUtil.resetConfigBudgetForTest(0.0);
+    int[] invocations = {0};
+    assertEquals(
+        StatusCode.TxTimeout,
+        PhoenixUtil.tryUntilOk(
+            "ExpiredBudgetCheck",
+            () -> {
+              invocations[0]++;
+              return StatusCode.OK;
+            },
+            5));
+    assertEquals(0, invocations[0], "Exhausted CanConfigBudget must skip blocking retries");
+    assertTrue(PhoenixUtil.getSkippedConfigCallCount() >= 1);
+    PhoenixUtil.resetConfigBudgetForTest();
+
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    CameraSpec[] cams = new CameraSpec[] {fig.getCamerasForRobot("FUEL").get(0)};
+    final double[] recordedLinearStd = {Double.NaN};
+    VisionIO stubIo =
+        new VisionIO() {
+          @Override
+          public void updateInputs(VisionIOInputs inputs) {
+            double ts = Timer.getFPGATimestamp();
+            inputs.connected = true;
+            inputs.tagIds = new int[] {1, 2};
+            inputs.poseObservations =
+                new PoseObservation[] {
+                  new PoseObservation(
+                      ts,
+                      new Pose3d(Double.NaN, 0.0, 0.0, Rotation3d.kZero),
+                      0.05,
+                      2,
+                      2.0,
+                      ObservationType.MEGATAG_1),
+                  new PoseObservation(
+                      ts + 0.20,
+                      new Pose3d(0.0, 0.0, 0.0, Rotation3d.kZero),
+                      0.05,
+                      2,
+                      2.0,
+                      ObservationType.MEGATAG_1),
+                  new PoseObservation(
+                      ts,
+                      new Pose3d(4.0, 4.0, 0.0, Rotation3d.kZero),
+                      0.05,
+                      2,
+                      2.0,
+                      ObservationType.MEGATAG_1)
+                };
+          }
+        };
+    FieldPositions.setCoordinateSystem(CoordinateSystem.WALL_BLUE_2026);
+    try {
+      Vision vision =
+          new Vision(
+              (pose, ts, std) -> recordedLinearStd[0] = std.get(0, 0), null, cams, stubIo);
+      double nowSec = Timer.getFPGATimestamp();
+      vision.recordMotionSample(2.1, 0.0, nowSec - 0.15);
+      vision.periodic();
+      assertEquals(0, vision.getAcceptedObservationCount(), "0.3s > 1.6 rad/s lookback must reject");
+
+      vision.recordMotionSample(0.1, Math.toRadians(6.0), nowSec + 0.001);
+      vision.periodic();
+      assertEquals(0, vision.getAcceptedObservationCount(), "> 5 deg tilt must reject");
+
+      Vision cleanVision =
+          new Vision(
+              (pose, ts, std) -> recordedLinearStd[0] = std.get(0, 0), null, cams, stubIo);
+      cleanVision.periodic();
+      assertEquals(1, cleanVision.getAcceptedObservationCount());
+      assertEquals(0.01, recordedLinearStd[0], 1e-6);
+      assertEquals(1.0, Vision.computeOdometryTiltTrustScale(Math.toRadians(5.0)), 1e-6);
+      assertEquals(0.5, Vision.computeOdometryTiltTrustScale(Math.toRadians(15.0)), 1e-6);
+      assertEquals(0.0, Vision.computeOdometryTiltTrustScale(Math.toRadians(25.0)), 1e-6);
+    } finally {
+      FieldPositions.setCoordinateSystem(savedCoord);
+    }
+
+    int[] turnCommands = {0};
+    ModuleIO spyModuleIo =
+        new ModuleIO() {
+          @Override
+          public void setTurnPosition(Rotation2d angle) {
+            turnCommands[0]++;
+          }
+        };
+    Module deadbandModule = new Module(spyModuleIo, 0, 0.05);
+    deadbandModule.runSetpoint(new SwerveModuleState(0.0, Rotation2d.fromDegrees(0.2)));
+    assertEquals(0, turnCommands[0], "<= 0.3 deg stationary micro-jitter must be ignored");
+    deadbandModule.runSetpoint(new SwerveModuleState(0.0, Rotation2d.fromDegrees(45.0)));
+    assertEquals(1, turnCommands[0], "45 deg stopWithX rotation must command steer angle");
   }
 }
