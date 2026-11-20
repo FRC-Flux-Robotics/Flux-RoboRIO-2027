@@ -24,18 +24,17 @@
 ---
 
 ## 2. Target Robots & RoboRIO / CANivore Hardware Rules (`RobotIdentity`)
-Robots identify at boot via `RobotController.getSerialNumber()` (with fallback to `RobotController.getComments()`):
+Robots identify at boot via `/home/lvuser/robot-identity.txt` first (exact token), then `RobotController.getSerialNumber()`, then legacy `RobotController.getComments()`, falling back to roboRIO-safe `FUEL` with a `DriverStation.reportError`:
 
 | Robot ID (`RobotIdentity`) | Controller | CAN Bus Mapping | Vision & Superstructure Mode |
 | :--- | :--- | :--- | :--- |
-| **`FUEL`** | roboRIO #1 | • `"Drivetrain"` CANivore (Pigeon 20)<br>• `"Mech"` CANivore<br>• `"rio"` native CAN (`auxCanBus`) | • **3x OV9281** on PhotonVision (`OV9281-2`, `OV9281-1`, `OV9281-3`)<br>• **6 Real Mechanisms:** `Intake` (ID 1), `Tilter` (ID 20, `-17.0 rot`), `Indexer` (ID 4), `Feeder` (ID 3), `Shooter` (ID 11 + follower 10), `Hood` (ID 12) |
+| **`FUEL`** *(Default roboRIO fallback)* | roboRIO #1 | • `"Drivetrain"` CANivore (Pigeon 20)<br>• `"Mech"` CANivore<br>• `"rio"` native CAN (`auxCanBus`) | • **3x OV9281** on PhotonVision (`OV9281-2`, `OV9281-1`, `OV9281-3`)<br>• **6 Real Mechanisms:** `Intake` (ID 1), `Tilter` (ID 20, `-17.0 rot`), `Indexer` (ID 4), `Feeder` (ID 3), `Shooter` (ID 11 + follower 10), `Hood` (ID 12) |
 | **`CORAL` / `CHASSIS_3`** | roboRIO #2 / #3 | • `"CANdace"` (Pigeon 24) / CTRE CANivore<br>• `"rio"` native CAN (`auxCanBus`) | • **1–3x OV9281** on PhotonVision + **Ghost Superstructure Mode** (`REAL` drive/vision + `SIM` virtual mechanisms feeding `VirtualBatterySim` & `FaultSupervisor`) |
-| **`COMP_2027`** *(Fallback)* | roboRIO 2.0 | • `"Drivetrain"` + `"Mech"` CANivores + `"rio"` | • **3–4x OV9281** on PhotonVision (`ROBORIO_CANIVORE_2026` profile) |
 
 ### Hardware Constraints (NEVER Violate)
 1. **Inline Battery Fuel Gauge (`BFG` `ROB-70001`) on `auxCanBus`:** Wire the 2-pin `BFG` CAN lead strictly to `"rio"` native 1 Mbps CAN 2.0 (`auxCanBus`—never on a CTRE CAN FD CANivore). `BatteryIO.java` decodes little-endian 29-bit frames for Mfg ID `11` (`0x0B`), APIs `0x000`, `0x004`, and `0x01C` (not `SEN-36005` ToF or `0x010–0x012`).
 2. **Swerve Current Limits & `MotionMagicExpoVoltage` Steer Gains:** Enforce **`60.0 A` Stator / `60.0 A` Slip** and **`40.0 A` Supply** current limits on all swerve drive motors (`withSlipCurrent` overwrites `StatorCurrentLimit`), `MotionMagicExpoVoltage` steer gains (`kP = 15.0, kD = 0.9, kS = 0.1, kV = 1.5, MotionMagicExpo_kV = 1.5, MotionMagicExpo_kA = 0.1`), and dual translation/rotation `PiecewiseSensitivity` curves.
-3. **Log Paths & `.hoot` Auto-Logging (`LogFileManager`, `Robot.java`):** Resolve `/U/logs` first, then `new File(Filesystem.getOperatingDirectory(), "logs")`, and keep `SignalLogger.enableAutoLogging(false)` in `Robot.java`.
+3. **Log Paths & `.hoot` Auto-Logging (`LogFileManager`, `Robot.java`):** Resolve `/U/logs` first (`500 MB` cap, verified via `/proc/mounts` non-`ro` check + real `.flux-rw-probe` write/delete), then `new File(Filesystem.getOperatingDirectory(), "logs")` (`120 MB` internal-flash cap), and keep `SignalLogger.enableAutoLogging(false)` in `Robot.java`.
 
 ---
 
