@@ -123,6 +123,12 @@ public final class FaultSupervisor {
   public double filterMechanismCommandVoltage(
       int channel, double requestedVoltage, double statorCurrentAmps, double mechanismVelocityRps) {
     int ch = (channel >= 0 && channel < MAX_JAM_CHANNELS) ? channel : JAM_CHANNEL_DEFAULT;
+    if (Math.abs(requestedVoltage) < 1e-6) {
+      jamStallCounters[ch] = 0;
+      jamReverseCountdowns[ch] = 0;
+      jamReverseVoltages[ch] = 0.0;
+      return 0.0;
+    }
     if (jamReverseCountdowns[ch] > 0) {
       jamReverseCountdowns[ch]--;
       return jamReverseVoltages[ch];
@@ -149,6 +155,11 @@ public final class FaultSupervisor {
   public boolean isChannelUnjamming(int channel) {
     int ch = (channel >= 0 && channel < MAX_JAM_CHANNELS) ? channel : JAM_CHANNEL_DEFAULT;
     return jamReverseCountdowns[ch] > 0;
+  }
+
+  public int getChannelReverseCountdown(int channel) {
+    int ch = (channel >= 0 && channel < MAX_JAM_CHANNELS) ? channel : JAM_CHANNEL_DEFAULT;
+    return jamReverseCountdowns[ch];
   }
 
   public int dejamEventsTriggered(int channel) {

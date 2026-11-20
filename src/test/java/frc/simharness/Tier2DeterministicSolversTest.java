@@ -20,6 +20,7 @@ import edu.wpi.first.math.kinematics.SwerveModuleState;
 import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.simulation.DriverStationSim;
+import edu.wpi.first.wpilibj.simulation.XboxControllerSim;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.Commands;
@@ -28,6 +29,8 @@ import frc.lib.commands.DriveCommands;
 import frc.lib.commands.DriveToPose;
 import frc.lib.commands.HardStopHomingCmd;
 import frc.lib.commands.PitSystemCheckCmd;
+import frc.lib.commands.PitSystemCheckCmd.PositionCheckTarget;
+import frc.lib.commands.PitSystemCheckCmd.VelocityCheckTarget;
 import frc.lib.commands.PreMatchCalibrator;
 import frc.lib.commands.ShopStressSuiteCmd;
 import frc.lib.commands.ZeroPriorBootstrapCmd;
@@ -79,6 +82,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -667,7 +671,7 @@ public class Tier2DeterministicSolversTest {
     Blitz15MinCmd blitz =
         new Blitz15MinCmd(pitCheck, blitzHoming, blitzBootstrap, stressSuite, checkpointFile);
     blitz.initialize();
-    for (int i = 0; i < PitSystemCheckCmd.TOTAL_LOOPS + 1; i++) {
+    for (int i = 0; i < pitCheck.getTotalLoops() + 1; i++) {
       blitz.execute();
       drive.periodic();
       fuelContainer.getTilter().periodic();
@@ -678,8 +682,11 @@ public class Tier2DeterministicSolversTest {
       fuelContainer.getShooter().periodic();
     }
     blitz.end(true);
+    assertTrue(pitCheck.hasPassed(), "Healthy sim PitSystemCheckCmd must pass: " + pitCheck.getSummary());
     assertEquals(1, blitz.getCurrentStageIndex());
 
+    // After pit check on blocks, place robot back at shop center (0, 0) for Stages 2-4
+    drive.setPose(new Pose2d(0.0, 0.0, Rotation2d.kZero));
     blitz.initialize();
     for (int i = 0; i < 200 && !blitz.isFinished(); i++) {
       vision.periodic();
@@ -1092,14 +1099,15 @@ public class Tier2DeterministicSolversTest {
           RobotIdentity.CORAL,
           RobotIdentity.detect("0323EEEE", "", null, coralRioTag, null, null, serialMap));
 
-      // Unknown real hex serial must warn loudly on fallback instead of staying silent
+      // Unknown real hex serial must warn loudly and fall back to roboRIO-safe FUEL profile
       assertEquals(
-          RobotIdentity.COMP_2027,
+          RobotIdentity.FUEL,
           RobotIdentity.detect("0323CAFE", "", null, null, null, null, serialMap));
       assertTrue(RobotIdentity.usedFallback(), "Unknown hex serial must flag fallback");
+      assertEquals("DEFAULT_FUEL", RobotIdentity.getLastResolutionSource());
       assertTrue(
           RobotIdentity.getLastWarningMessage().contains("0323CAFE"),
-          "Fallback warning must name the unrecognized hex serial");
+          "Fallback error must name the unrecognized hex serial");
 
       // Disabled config-reload honesty: disk edits flag RestartRequired without mutating boot SHA
       Path cfgCopy = tmpDir.resolve("configs");
@@ -1388,5 +1396,667 @@ public class Tier2DeterministicSolversTest {
         1e-6,
         "Superstructure INTAKING must drive reverse unjam voltage on stalled Intake");
     assertTrue(ssSup.dejamEventsTriggered(FaultSupervisor.JAM_CHANNEL_INTAKE) >= 1);
+  }
+
+  @Test
+  public void testDisableWhileShootingReturnsToIdleOnNextEnable() throws Exception {
+    Path tmpDir = Files.createTempDirectory("flux-blk03-test");
+    String prevLogDir = System.getProperty("flux.logDir");
+    System.setProperty("flux.logDir", tmpDir.resolve("logs").toString());
+    try (Robot robot = new Robot(tmpDir.resolve("flux-robot-state"))) {
+      DriverStationSim.setFmsAttached(false);
+      DriverStationSim.setAutonomous(false);
+      DriverStationSim.setTest(false);
+      DriverStationSim.setEnabled(false);
+      DriverStationSim.notifyNewData();
+
+      robot.robotInit();
+      Superstructure ss = robot.getRobotContainer().getSuperstructure();
+
+      // Enable Teleop and latch SHOOTING
+      DriverStationSim.setEnabled(true);
+      DriverStationSim.notifyNewData();
+      robot.teleopInit();
+      ss.shoot(Superstructure.DEFAULT_MID_SHOOTER_RPS, Superstructure.DEFAULT_MID_HOOD_ROT);
+      robot.robotPeriodic();
+      assertEquals(State.SHOOTING, ss.getState());
+      assertEquals(
+          Superstructure.DEFAULT_MID_SHOOTER_RPS, ss.getShooter().getTargetVelocity(), 1e-4);
+
+      // Disable while shooting: disabledInit() must immediately return Superstructure to IDLE
+      DriverStationSim.setEnabled(false);
+      DriverStationSim.notifyNewData();
+      robot.disabledInit();
+      robot.robotPeriodic();
+      assertEquals(State.IDLE, ss.getState(), "disabledInit() must reset Superstructure to IDLE");
+      assertEquals(0.0, ss.getShooter().getTargetVelocity(), 1e-4);
+
+      // Re-enable Teleop: must remain IDLE with 0 RPS
+      DriverStationSim.setEnabled(true);
+      DriverStationSim.notifyNewData();
+      robot.teleopInit();
+      robot.robotPeriodic();
+      assertEquals(State.IDLE, ss.getState(), "teleopInit() must keep Superstructure in IDLE");
+      assertEquals(0.0, ss.getShooter().getTargetVelocity(), 1e-4);
+
+      // Latch INTAKING then enter Test mode: testInit() must reset to IDLE with 0 RPS
+      ss.requestState(State.INTAKING);
+      assertEquals(State.INTAKING, ss.getState());
+      DriverStationSim.setTest(true);
+      DriverStationSim.setEnabled(true);
+      DriverStationSim.notifyNewData();
+      robot.testInit();
+      robot.robotPeriodic();
+      assertEquals(State.IDLE, ss.getState(), "testInit() must reset Superstructure to IDLE");
+      assertEquals(0.0, ss.getIntake().getTargetVelocity(), 1e-4);
+      assertEquals(0.0, ss.getShooter().getTargetVelocity(), 1e-4);
+
+      // Verify .onFalse(...).ignoringDisable(true) fires while Disabled when trigger is released
+      DriverStationSim.setTest(false);
+      DriverStationSim.setEnabled(true);
+      DriverStationSim.notifyNewData();
+      XboxControllerSim opSim = new XboxControllerSim(1);
+      opSim.setLeftBumperButton(true);
+      opSim.notifyNewData();
+      DriverStationSim.notifyNewData();
+      CommandScheduler.getInstance().run();
+      assertEquals(State.INTAKING, ss.getState());
+
+      DriverStationSim.setEnabled(false);
+      DriverStationSim.notifyNewData();
+      // Re-latch manually to prove the .onFalse().ignoringDisable(true) binding itself fires
+      ss.requestState(State.INTAKING);
+      opSim.setLeftBumperButton(false);
+      opSim.notifyNewData();
+      DriverStationSim.notifyNewData();
+      CommandScheduler.getInstance().run();
+      assertEquals(
+          State.IDLE,
+          ss.getState(),
+          "Releasing LB while Disabled must trigger .ignoringDisable(true) IDLE reset");
+    } finally {
+      CommandScheduler.getInstance().cancelAll();
+      DriverStationSim.setFmsAttached(false);
+      DriverStationSim.setTest(false);
+      DriverStationSim.setEnabled(false);
+      DriverStationSim.notifyNewData();
+      if (prevLogDir == null) {
+        System.clearProperty("flux.logDir");
+      } else {
+        System.setProperty("flux.logDir", prevLogDir);
+      }
+      deleteTree(tmpDir);
+    }
+  }
+
+  @Test
+  public void testPitSystemCheckPassesHealthyAndFailsOnDisconnectedMechanism() {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    RobotContainer container =
+        new RobotContainer(RobotIdentity.FUEL, Paths.get("src/main/deploy/configs"), true);
+
+    PitSystemCheckCmd prodPit = container.createPitSystemCheckCommand();
+    assertTrue(
+        prodPit.getRequirements().contains(container.getSuperstructure()),
+        "PitSystemCheckCmd must require Superstructure so active commands cannot fight it");
+    double nominalSec = prodPit.getTotalLoops() * 0.020;
+    assertTrue(
+        nominalSec >= 15.0 && nominalSec <= 20.0,
+        "Nominal PitSystemCheckCmd duration must be 15-20s (got " + nominalSec + " s)");
+
+    // Run fast-step healthy check verifying every actuator passes with safe directions
+    PitSystemCheckCmd healthyCheck =
+        new PitSystemCheckCmd(
+            container.getDrive(),
+            List.of(
+                new PositionCheckTarget(container.getTilter(), -2.0, 0.0),
+                new PositionCheckTarget(container.getHood(), 2.0, 0.0)),
+            List.of(
+                new VelocityCheckTarget(container.getIntake(), 20.0),
+                new VelocityCheckTarget(container.getIndexer(), 20.0),
+                new VelocityCheckTarget(container.getFeeder(), -20.0),
+                new VelocityCheckTarget(container.getShooter(), 25.0)),
+            10,
+            4,
+            container::resetSuperstructureToIdle,
+            container.getSuperstructure());
+    healthyCheck.initialize();
+    double minTilterPos = 0.0;
+    double maxHoodPos = 0.0;
+    double minFeederVel = 0.0;
+    while (!healthyCheck.isFinished()) {
+      healthyCheck.execute();
+      container.getDrive().periodic();
+      container.getTilter().periodic();
+      container.getHood().periodic();
+      container.getIntake().periodic();
+      container.getIndexer().periodic();
+      container.getFeeder().periodic();
+      container.getShooter().periodic();
+      minTilterPos = Math.min(minTilterPos, container.getTilter().getPosition());
+      maxHoodPos = Math.max(maxHoodPos, container.getHood().getPosition());
+      minFeederVel = Math.min(minFeederVel, container.getFeeder().getVelocity());
+    }
+    healthyCheck.end(false);
+    assertTrue(
+        healthyCheck.hasPassed(), "Healthy sim pit check must pass: " + healthyCheck.getSummary());
+    assertTrue(healthyCheck.getFailedActuators().isEmpty());
+    assertTrue(minTilterPos < -0.5, "Tilter must step in negative safe direction (-2.0 -> 0.0)");
+    assertTrue(maxHoodPos > 0.5, "Hood must step in positive safe direction (2.0 -> 0.0)");
+    assertTrue(minFeederVel < -5.0, "Feeder must step in negative safe direction (-20.0 RPS)");
+
+    // Disconnected mechanism must cause PitSystemCheckCmd to fail
+    MechanismSpec shooterSpec = fig.getMechanismSpec("FUEL", "Shooter");
+    MechanismIO disconnectedShooterIo =
+        new MechanismIO() {
+          @Override
+          public void updateInputs(MechanismIOInputs inputs) {
+            inputs.motorConnected = false;
+            inputs.velocityRPS = 0.0;
+            inputs.statorCurrentA = 0.0;
+          }
+        };
+    VelocityMechanism disconnectedShooter =
+        new VelocityMechanism(disconnectedShooterIo, shooterSpec);
+    PitSystemCheckCmd failingCheck =
+        new PitSystemCheckCmd(
+            container.getDrive(),
+            List.of(
+                new PositionCheckTarget(container.getTilter(), -2.0, 0.0),
+                new PositionCheckTarget(container.getHood(), 2.0, 0.0)),
+            List.of(
+                new VelocityCheckTarget(container.getIntake(), 20.0),
+                new VelocityCheckTarget(container.getIndexer(), 20.0),
+                new VelocityCheckTarget(container.getFeeder(), -20.0),
+                new VelocityCheckTarget(disconnectedShooter, 25.0)),
+            10,
+            4,
+            container::resetSuperstructureToIdle,
+            container.getSuperstructure());
+    failingCheck.initialize();
+    while (!failingCheck.isFinished()) {
+      failingCheck.execute();
+      container.getDrive().periodic();
+      container.getTilter().periodic();
+      container.getHood().periodic();
+      container.getIntake().periodic();
+      container.getIndexer().periodic();
+      container.getFeeder().periodic();
+      disconnectedShooter.periodic();
+    }
+    failingCheck.end(false);
+    assertFalse(
+        failingCheck.hasPassed(),
+        "PitSystemCheckCmd must FAIL when any mechanism is disconnected");
+    assertTrue(
+        failingCheck.getFailedActuators().stream().anyMatch(s -> s.contains("Shooter")),
+        "Failed actuator report must identify Shooter: " + failingCheck.getFailedActuators());
+  }
+
+  @Test
+  public void testRobotIdentityPrecedenceAndRoboRioSafeFallbackTable() throws Exception {
+    Path tmpDir = Files.createTempDirectory("flux-blk07-test");
+    try {
+      Map<String, RobotIdentity> serialMap = Map.of("03231111", RobotIdentity.CORAL);
+      Path rioTag = tmpDir.resolve("rio-id.txt");
+      Path scTag = tmpDir.resolve("sc-id.txt");
+      Path deployTag = tmpDir.resolve("deploy-id.txt");
+      Path devTree = tmpDir.resolve("devtree-serial");
+
+      // Case 1: Hardware serial map wins over conflicting persistent tags and legacy comments
+      Files.writeString(rioTag, "FUEL\n");
+      Files.writeString(scTag, "PRACTICE_2027\n");
+      Files.writeString(deployTag, "COMP_2027\n");
+      Files.writeString(devTree, "CHASSIS_3\0");
+      assertEquals(
+          RobotIdentity.CORAL,
+          RobotIdentity.detect("03231111", "FUEL", devTree, rioTag, scTag, deployTag, serialMap));
+      assertEquals("HAL_SERIAL_MAP", RobotIdentity.getLastResolutionSource());
+
+      // Case 2: /home/lvuser/robot-identity.txt wins over legacy Comments ("CORAL")
+      assertEquals(
+          RobotIdentity.FUEL,
+          RobotIdentity.detect(
+              "03239999", "CORAL", devTree, rioTag, scTag, deployTag, serialMap));
+      assertEquals("ROBORIO_PERSISTENT_TAG", RobotIdentity.getLastResolutionSource());
+      assertFalse(RobotIdentity.usedFallback());
+
+      // Case 3: SystemCore persistent tag wins over deploy tag, devicetree, and legacy comments
+      Files.deleteIfExists(rioTag);
+      assertEquals(
+          RobotIdentity.PRACTICE_2027,
+          RobotIdentity.detect(
+              "03239999", "CORAL", devTree, rioTag, scTag, deployTag, serialMap));
+      assertEquals("SYSTEMCORE_PERSISTENT_TAG", RobotIdentity.getLastResolutionSource());
+
+      // Case 4: Deploy tag wins over devicetree and legacy comments
+      Files.deleteIfExists(scTag);
+      assertEquals(
+          RobotIdentity.COMP_2027,
+          RobotIdentity.detect(
+              "03239999", "CORAL", devTree, rioTag, scTag, deployTag, serialMap));
+      assertEquals("DEPLOY_TAG", RobotIdentity.getLastResolutionSource());
+
+      // Case 5: Devicetree serial wins over legacy comments
+      Files.deleteIfExists(deployTag);
+      assertEquals(
+          RobotIdentity.CHASSIS_3,
+          RobotIdentity.detect(
+              "03239999", "CORAL", devTree, rioTag, scTag, deployTag, serialMap));
+      assertEquals("DEVICETREE_SERIAL", RobotIdentity.getLastResolutionSource());
+
+      // Case 6: Substring noise and ambiguous comments do NOT hijack identity; fallback is FUEL
+      Files.deleteIfExists(devTree);
+      assertEquals(
+          RobotIdentity.FUEL,
+          RobotIdentity.detect(
+              "0323BEEF", "REFUELING CORALINE", devTree, rioTag, scTag, deployTag, serialMap));
+      assertTrue(RobotIdentity.usedFallback());
+      assertEquals("DEFAULT_FUEL", RobotIdentity.getLastResolutionSource());
+      assertTrue(RobotIdentity.getLastWarningMessage().contains("0323BEEF"));
+
+      assertEquals(
+          RobotIdentity.FUEL,
+          RobotIdentity.detect(
+              "0323DEAD", "legacy CORAL now FUEL", devTree, rioTag, scTag, deployTag, serialMap));
+      assertTrue(RobotIdentity.usedFallback(), "Ambiguous multi-robot comment must not guess");
+      assertEquals("DEFAULT_FUEL", RobotIdentity.getLastResolutionSource());
+    } finally {
+      deleteTree(tmpDir);
+    }
+  }
+
+  @Test
+  public void testHubAlignPoseMirrorsForRedAlliance() {
+    CoordinateSystem savedCoord = FieldPositions.getCoordinateSystem();
+    try {
+      FieldPositions.setCoordinateSystem(CoordinateSystem.WALL_BLUE_2026);
+      FieldPositions.setFieldProfile(FieldProfile.FULL_FIELD);
+
+      Pose2d bluePose = RobotContainer.getHubAlignTargetPose(false);
+      assertEquals(2.5, bluePose.getX(), 1e-6);
+      assertEquals(4.1, bluePose.getY(), 1e-6);
+      assertEquals(0.0, bluePose.getRotation().getRadians(), 1e-6);
+
+      Pose2d redPose = RobotContainer.getHubAlignTargetPose(true);
+      assertEquals(FieldPositions.FIELD_LENGTH_METERS - 2.5, redPose.getX(), 1e-6);
+      assertEquals(FieldPositions.FIELD_WIDTH_METERS - 4.1, redPose.getY(), 1e-6);
+      assertEquals(Math.PI, Math.abs(redPose.getRotation().getRadians()), 1e-6);
+
+      // Verify DriveToPose on Red alliance drives toward the Red Hub spot, not across to Blue
+      FieldPositions.setAllianceOverride(true);
+      RobotContainer container =
+          new RobotContainer(RobotIdentity.FUEL, Paths.get("src/main/deploy/configs"), true);
+      Drive drive = container.getDrive();
+      drive.setPose(new Pose2d(13.2, 4.0, Rotation2d.kPi));
+      DriveToPose redAlign =
+          new DriveToPose(
+              drive,
+              () -> RobotContainer.getHubAlignTargetPose(FieldPositions.isRedAlliance()),
+              () -> true);
+      redAlign.initialize();
+      for (int i = 0; i < 60 && !redAlign.isFinished(); i++) {
+        redAlign.execute();
+        drive.periodic();
+      }
+      redAlign.end(false);
+      assertTrue(
+          drive.getPose().getX() > 13.5,
+          "Red-alliance Hub align must move toward Red pose (14.041, 3.969), got X="
+              + drive.getPose().getX());
+    } finally {
+      FieldPositions.setAllianceOverride(null);
+      FieldPositions.setCoordinateSystem(savedCoord);
+    }
+  }
+
+  @Test
+  public void testGhostSuperstructureUsesRealBatteryVoltage() {
+    // Physical robot (forceSimIo=false, isReal=true) must use real battery voltage even on CORAL
+    assertEquals(
+        7.6,
+        RobotContainer.selectEffectiveBatteryVoltage(false, true, 7.6, 12.6),
+        1e-6,
+        "Physical CORAL/CHASSIS_3 robot must feed real RobotController voltage to FaultSupervisor");
+    // Desktop sim must continue using VirtualBatterySim voltage
+    assertEquals(
+        12.4,
+        RobotContainer.selectEffectiveBatteryVoltage(true, true, 7.6, 12.4),
+        1e-6);
+    assertEquals(
+        12.4,
+        RobotContainer.selectEffectiveBatteryVoltage(false, false, 7.6, 12.4),
+        1e-6);
+
+    RobotContainer coral =
+        new RobotContainer(RobotIdentity.CORAL, Paths.get("src/main/deploy/configs"), true);
+    assertTrue(coral.isGhostSuperstructureActive());
+    double realSagV = RobotContainer.selectEffectiveBatteryVoltage(false, true, 7.6, 12.6);
+    double throttledStatorA = coral.getFaultSupervisor().updateBatteryProtection(realSagV, 18.0);
+    assertTrue(
+        throttledStatorA < FaultSupervisor.NOMINAL_DRIVE_STATOR_LIMIT_AMPS,
+        "Real 7.6 V sag on physical CORAL must engage brownout stator throttling (got "
+            + throttledStatorA
+            + " A)");
+  }
+
+  @Test
+  public void testShootingStopsIntake() {
+    RobotContainer container =
+        new RobotContainer(RobotIdentity.FUEL, Paths.get("src/main/deploy/configs"), true);
+    Superstructure ss = container.getSuperstructure();
+
+    ss.requestState(State.INTAKING);
+    assertEquals(Superstructure.DEFAULT_INTAKE_IN_RPS, ss.getIntake().getTargetVelocity(), 1e-4);
+    assertEquals(Superstructure.DEFAULT_TILTER_DEPLOY_ROT, ss.getTilter().getTargetPosition(), 1e-4);
+
+    ss.shoot(Superstructure.DEFAULT_MID_SHOOTER_RPS, Superstructure.DEFAULT_MID_HOOD_ROT);
+    assertEquals(State.SHOOTING, ss.getState());
+    assertEquals(
+        0.0, ss.getIntake().getTargetVelocity(), 1e-4, "SHOOTING must stop intake from INTAKING");
+    assertEquals(
+        Superstructure.DEFAULT_TILTER_STOW_ROT,
+        ss.getTilter().getTargetPosition(),
+        1e-4,
+        "SHOOTING must stow tilter");
+
+    ss.requestState(State.OUTTAKING);
+    assertEquals(Superstructure.DEFAULT_INTAKE_OUT_RPS, ss.getIntake().getTargetVelocity(), 1e-4);
+    ss.shoot(Superstructure.DEFAULT_MID_SHOOTER_RPS, Superstructure.DEFAULT_MID_HOOD_ROT);
+    assertEquals(
+        0.0, ss.getIntake().getTargetVelocity(), 1e-4, "SHOOTING must stop intake from OUTTAKING");
+  }
+
+  @Test
+  public void testUnjamTimersTickOncePerLoopWhileShooting() {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    FaultSupervisor sup = new FaultSupervisor(3);
+    double[] lastIndexerVolts = {0.0};
+
+    MechanismIO stalledIndexerIo =
+        new MechanismIO() {
+          @Override
+          public void updateInputs(MechanismIOInputs inputs) {
+            inputs.motorConnected = true;
+            inputs.statorCurrentA = 48.0;
+            inputs.velocityRPS = 0.0;
+          }
+
+          @Override
+          public void setVoltage(double volts) {
+            lastIndexerVolts[0] = volts;
+          }
+        };
+    MechanismIO readyShooterIo =
+        new MechanismIO() {
+          @Override
+          public void updateInputs(MechanismIOInputs inputs) {
+            inputs.motorConnected = true;
+            inputs.velocityRPS = Superstructure.DEFAULT_MID_SHOOTER_RPS;
+          }
+        };
+    MechanismIO readyHoodIo =
+        new MechanismIO() {
+          @Override
+          public void updateInputs(MechanismIOInputs inputs) {
+            inputs.motorConnected = true;
+            inputs.positionRotations = Superstructure.DEFAULT_MID_HOOD_ROT;
+          }
+        };
+
+    VelocityMechanism intake =
+        new VelocityMechanism(
+            new MechanismIOSim(fig.getMechanismSpec("FUEL", "Intake")),
+            fig.getMechanismSpec("FUEL", "Intake"));
+    PositionMechanism tilter =
+        new PositionMechanism(
+            new MechanismIOSim(fig.getMechanismSpec("FUEL", "Tilter")),
+            fig.getMechanismSpec("FUEL", "Tilter"));
+    VelocityMechanism indexer =
+        new VelocityMechanism(stalledIndexerIo, fig.getMechanismSpec("FUEL", "Indexer"));
+    VelocityMechanism feeder =
+        new VelocityMechanism(
+            new MechanismIOSim(fig.getMechanismSpec("FUEL", "Feeder")),
+            fig.getMechanismSpec("FUEL", "Feeder"));
+    VelocityMechanism shooter =
+        new VelocityMechanism(readyShooterIo, fig.getMechanismSpec("FUEL", "Shooter"));
+    PositionMechanism hood =
+        new PositionMechanism(readyHoodIo, fig.getMechanismSpec("FUEL", "Hood"), 0.15);
+
+    Superstructure ss = new Superstructure(intake, tilter, indexer, feeder, shooter, hood, sup);
+    ShotSolution sol =
+        new ShotSolution(
+            Rotation2d.kZero,
+            2.8,
+            Superstructure.DEFAULT_MID_SHOOTER_RPS,
+            Superstructure.DEFAULT_MID_HOOD_ROT,
+            0.35,
+            0.0);
+
+    // Pre-seed a feeder reverse countdown to verify indexerUnjamming does NOT decrement it
+    for (int i = 0; i < FaultSupervisor.JAM_DETECT_LOOPS; i++) {
+      sup.filterMechanismCommandVoltage(FaultSupervisor.JAM_CHANNEL_FEEDER, -8.0, 48.0, 0.0);
+    }
+    int feederCountdownBeforeIndexerJam =
+        sup.getChannelReverseCountdown(FaultSupervisor.JAM_CHANNEL_FEEDER);
+    assertEquals(FaultSupervisor.JAM_REVERSE_PULSE_LOOPS, feederCountdownBeforeIndexerJam);
+    // Clear feeder countdown for the first phase, then re-seed right before indexer jam triggers
+    sup.filterMechanismCommandVoltage(FaultSupervisor.JAM_CHANNEL_FEEDER, 0.0, 0.0, 0.0);
+
+    // Call BOTH applyShotSolution AND periodic on every loop (exact teleop/auto shooting pattern)
+    for (int loop = 1; loop < FaultSupervisor.JAM_DETECT_LOOPS; loop++) {
+      shooter.periodic();
+      hood.periodic();
+      indexer.periodic();
+      feeder.periodic();
+      ss.applyShotSolution(sol, true, 0.0, true);
+      ss.periodic();
+      assertEquals(
+          0,
+          sup.dejamEventsTriggered(FaultSupervisor.JAM_CHANNEL_INDEXER),
+          "Indexer jam must not trigger early on loop " + loop + " (double-tick bug)");
+    }
+
+    // Seed an active feeder reverse countdown right before the indexer jam triggers on loop 13
+    for (int i = 0; i < FaultSupervisor.JAM_DETECT_LOOPS; i++) {
+      sup.filterMechanismCommandVoltage(FaultSupervisor.JAM_CHANNEL_FEEDER, -8.0, 48.0, 0.0);
+    }
+    int seededFeederCountdown = sup.getChannelReverseCountdown(FaultSupervisor.JAM_CHANNEL_FEEDER);
+
+    // Loop JAM_DETECT_LOOPS (13): indexer jam must trigger exactly once
+    shooter.periodic();
+    hood.periodic();
+    indexer.periodic();
+    feeder.periodic();
+    ss.applyShotSolution(sol, true, 0.0, true);
+    ss.periodic();
+    assertEquals(1, sup.dejamEventsTriggered(FaultSupervisor.JAM_CHANNEL_INDEXER));
+    assertEquals(FaultSupervisor.JAM_REVERSE_VOLTAGE, lastIndexerVolts[0], 1e-6);
+    assertEquals(
+        seededFeederCountdown,
+        sup.getChannelReverseCountdown(FaultSupervisor.JAM_CHANNEL_FEEDER),
+        "Feeder unjam countdown must NOT decrement while feeder is forced stopped by indexerUnjamming");
+
+    // Verify unjam pulse lasts the full JAM_REVERSE_PULSE_LOOPS even with applyShotSolution + periodic
+    for (int pulseLoop = 0; pulseLoop < FaultSupervisor.JAM_REVERSE_PULSE_LOOPS - 2; pulseLoop++) {
+      ss.applyShotSolution(sol, true, 0.0, true);
+      ss.periodic();
+      assertTrue(
+          sup.isChannelUnjamming(FaultSupervisor.JAM_CHANNEL_INDEXER),
+          "Indexer unjam timer must tick once per loop, not twice (expired at pulseLoop="
+              + pulseLoop
+              + ")");
+      assertEquals(
+          seededFeederCountdown,
+          sup.getChannelReverseCountdown(FaultSupervisor.JAM_CHANNEL_FEEDER),
+          "Feeder countdown must stay paused throughout indexerUnjamming");
+    }
+  }
+
+  @Test
+  public void testDriverResetFieldHeadingPreservesTranslationForBlueAndRed() {
+    CoordinateSystem savedCoord = FieldPositions.getCoordinateSystem();
+    try {
+      FieldPositions.setCoordinateSystem(CoordinateSystem.WALL_BLUE_2026);
+      FieldPositions.setFieldProfile(FieldProfile.FULL_FIELD);
+      RobotContainer container =
+          new RobotContainer(RobotIdentity.FUEL, Paths.get("src/main/deploy/configs"), true);
+      Drive drive = container.getDrive();
+
+      FieldPositions.setAllianceOverride(false);
+      drive.setPose(new Pose2d(3.4, 5.2, Rotation2d.fromDegrees(73.0)));
+      container.resetFieldHeading();
+      Pose2d afterBlue = drive.getPose();
+      assertEquals(3.4, afterBlue.getX(), 1e-6);
+      assertEquals(5.2, afterBlue.getY(), 1e-6);
+      assertEquals(0.0, afterBlue.getRotation().getRadians(), 1e-6);
+
+      FieldPositions.setAllianceOverride(true);
+      drive.setPose(new Pose2d(12.1, 2.8, Rotation2d.fromDegrees(-42.0)));
+      container.resetFieldHeading();
+      Pose2d afterRed = drive.getPose();
+      assertEquals(12.1, afterRed.getX(), 1e-6);
+      assertEquals(2.8, afterRed.getY(), 1e-6);
+      assertEquals(Math.PI, Math.abs(afterRed.getRotation().getRadians()), 1e-6);
+    } finally {
+      FieldPositions.setAllianceOverride(null);
+      FieldPositions.setCoordinateSystem(savedCoord);
+    }
+  }
+
+  @Test
+  public void testShotCalibrationNeverFeeds() {
+    RobotContainer container =
+        new RobotContainer(RobotIdentity.FUEL, Paths.get("src/main/deploy/configs"), true);
+    container.getDrive().setPose(new Pose2d(2.5, 4.035, Rotation2d.kZero));
+    ShotCalibrationCmd shotCal = container.createShotCalibrationCommand();
+    Superstructure ss = container.getSuperstructure();
+
+    shotCal.initialize();
+    while (!shotCal.isFinished()) {
+      shotCal.execute();
+      container.getShooter().periodic();
+      container.getHood().periodic();
+      container.getIndexer().periodic();
+      container.getFeeder().periodic();
+      ss.periodic();
+      assertFalse(
+          ss.getState() == State.SHOOTING,
+          "ShotCalibrationCmd must stay in PREPPING_SHOT and never enter SHOOTING");
+      assertEquals(
+          0.0, ss.getFeeder().getTargetVelocity(), 1e-4, "ShotCalibrationCmd must never feed");
+      assertEquals(
+          0.0,
+          ss.getIndexer().getTargetVelocity(),
+          1e-4,
+          "ShotCalibrationCmd must never run indexer");
+    }
+    shotCal.end(false);
+    assertEquals(State.IDLE, ss.getState());
+    assertEquals(5, shotCal.getRecordedCsvRows().size());
+  }
+
+  @Test
+  public void testInternalFlashRetentionCapAndWriteProbe() throws Exception {
+    assertEquals(120L * 1024 * 1024, LogFileManager.MAX_INTERNAL_STORAGE_BYTES);
+    assertEquals(500L * 1024 * 1024, LogFileManager.MAX_EXTERNAL_STORAGE_BYTES);
+
+    Path tmpDir = Files.createTempDirectory("flux-riolib13-test");
+    Path roDir = tmpDir.resolve("ro-usb");
+    try {
+      Path rwUsb = tmpDir.resolve("rw-usb");
+      Path internalLogs = tmpDir.resolve("internal-logs");
+      Files.createDirectories(rwUsb);
+      Files.createDirectories(roDir);
+      Files.createDirectories(internalLogs);
+
+      assertTrue(LogFileManager.probeDirectoryWritable(rwUsb));
+      try (var stream = Files.list(rwUsb)) {
+        assertTrue(
+            stream.noneMatch(p -> p.getFileName().toString().startsWith(".flux-rw-probe")),
+            "Write probe must clean up its temporary probe file");
+      }
+
+      // Mount listed with 'ro' option must fail isMountedWritableDirectory
+      Path roMounts = tmpDir.resolve("ro-mounts");
+      Files.writeString(roMounts, "/dev/sda1 " + rwUsb.toRealPath() + " vfat ro,relatime 0 0\n");
+      assertFalse(
+          LogFileManager.isMountedWritableDirectory(rwUsb, tmpDir, roMounts),
+          "Read-only mount option in /proc/mounts must fail mount check");
+
+      // Directory with read-only permissions must fail probe even if /proc/mounts says 'rw'
+      Path fakeRwMountsForRoDir = tmpDir.resolve("rw-mounts-ro-dir");
+      Files.writeString(
+          fakeRwMountsForRoDir, "/dev/sda1 " + roDir.toRealPath() + " vfat rw 0 0\n");
+      Files.setPosixFilePermissions(roDir, PosixFilePermissions.fromString("r-xr-xr-x"));
+      assertFalse(
+          LogFileManager.probeDirectoryWritable(roDir),
+          "Read-only directory must fail real temp-file write probe");
+      assertFalse(
+          LogFileManager.isMountedWritableDirectory(roDir, tmpDir, fakeRwMountsForRoDir),
+          "Read-only remounted FAT32 directory must be rejected by write probe");
+
+      // resolveLogPath must fall back to internal logs when USB is read-only
+      String fallbackPath =
+          LogFileManager.resolveLogPath(
+              roDir, tmpDir, fakeRwMountsForRoDir, internalLogs.toFile());
+      assertEquals(internalLogs.toAbsolutePath().toString(), fallbackPath);
+
+      // Writable mounted USB resolves to USB logs/
+      Path rwMounts = tmpDir.resolve("rw-mounts");
+      Files.writeString(rwMounts, "/dev/sda1 " + rwUsb.toRealPath() + " vfat rw 0 0\n");
+      String usbPath =
+          LogFileManager.resolveLogPath(rwUsb, tmpDir, rwMounts, internalLogs.toFile());
+      assertEquals(rwUsb.resolve("logs").toAbsolutePath().toString(), usbPath);
+    } finally {
+      try {
+        Files.setPosixFilePermissions(roDir, PosixFilePermissions.fromString("rwxr-xr-x"));
+      } catch (Exception ignored) {
+      }
+      deleteTree(tmpDir);
+    }
+  }
+
+  @Test
+  public void testJamReverseHaltsOnZeroCommand() {
+    FaultSupervisor sup = new FaultSupervisor(3);
+    double out = 8.0;
+    for (int i = 0; i < FaultSupervisor.JAM_DETECT_LOOPS; i++) {
+      out = sup.filterMechanismCommandVoltage(FaultSupervisor.JAM_CHANNEL_INTAKE, 8.0, 48.0, 0.0);
+    }
+    assertEquals(FaultSupervisor.JAM_REVERSE_VOLTAGE, out, 1e-6);
+    assertTrue(sup.isChannelUnjamming(FaultSupervisor.JAM_CHANNEL_INTAKE));
+
+    // Releasing trigger (0.0 V command) must immediately halt reverse unjam and clear countdown
+    double zeroOut =
+        sup.filterMechanismCommandVoltage(FaultSupervisor.JAM_CHANNEL_INTAKE, 0.0, 0.0, 0.0);
+    assertEquals(0.0, zeroOut, 1e-6, "Zero command must immediately return 0.0 V");
+    assertFalse(
+        sup.isChannelUnjamming(FaultSupervisor.JAM_CHANNEL_INTAKE),
+        "Zero command must clear active jamReverseCountdowns");
+    assertEquals(0, sup.getChannelReverseCountdown(FaultSupervisor.JAM_CHANNEL_INTAKE));
+
+    // Next fresh press must NOT replay a stale reverse pulse
+    double freshPressOut =
+        sup.filterMechanismCommandVoltage(FaultSupervisor.JAM_CHANNEL_INTAKE, 8.0, 12.0, 35.0);
+    assertEquals(
+        8.0, freshPressOut, 1e-6, "Next press after release must command requested positive volts");
+  }
+
+  private static void deleteTree(Path root) {
+    if (root == null || !Files.exists(root)) {
+      return;
+    }
+    try (var walk = Files.walk(root)) {
+      walk.sorted(java.util.Comparator.reverseOrder())
+          .forEach(
+              p -> {
+                try {
+                  Files.deleteIfExists(p);
+                } catch (Exception ignored) {
+                }
+              });
+    } catch (Exception ignored) {
+    }
   }
 }

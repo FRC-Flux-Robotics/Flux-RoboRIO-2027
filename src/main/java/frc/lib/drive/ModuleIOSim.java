@@ -81,6 +81,16 @@ public class ModuleIOSim implements ModuleIO {
   }
 
   @Override
+  public void warmup() {
+    driveSim.setInputVoltage(0.0);
+    turnSim.setInputVoltage(0.0);
+    driveSim.update(SUBSTEP_DT_SEC);
+    turnSim.update(SUBSTEP_DT_SEC);
+    driveSim.setState(0.0, 0.0);
+    turnSim.setState(0.0, 0.0);
+  }
+
+  @Override
   public void updateInputs(ModuleIOInputs inputs) {
     double nowSec = Timer.getFPGATimestamp();
     double[] timestamps = new double[SUBSTEPS_PER_CYCLE];
@@ -89,11 +99,11 @@ public class ModuleIOSim implements ModuleIO {
 
     for (int step = 0; step < SUBSTEPS_PER_CYCLE; step++) {
       if (driveClosedLoop) {
-        double velErr = driveTargetVelRadPerSec - driveSim.getAngularVelocityRadPerSec();
-        double ff =
-            config.driveKs() * Math.signum(driveTargetVelRadPerSec)
-                + (driveTargetVelRadPerSec / (2.0 * Math.PI)) * config.driveKv();
-        driveAppliedVolts = MathUtil.clamp(ff + velErr * config.driveKp(), -12.0, 12.0);
+        double targetRps = driveTargetVelRadPerSec / (2.0 * Math.PI);
+        double actualRps = driveSim.getAngularVelocityRadPerSec() / (2.0 * Math.PI);
+        double velErrRps = targetRps - actualRps;
+        double ff = config.driveKs() * Math.signum(targetRps) + targetRps * config.driveKv();
+        driveAppliedVolts = MathUtil.clamp(ff + velErrRps * config.driveKp(), -12.0, 12.0);
       }
       if (turnClosedLoop) {
         double angleErr =

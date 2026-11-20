@@ -97,6 +97,14 @@ public class Module {
     return inputs.driveStatorCurrentAmps;
   }
 
+  public double getTurnStatorCurrentAmps() {
+    return inputs.turnStatorCurrentAmps;
+  }
+
+  public void warmup() {
+    io.warmup();
+  }
+
   public double getTotalSupplyCurrentAmps() {
     return inputs.driveSupplyCurrentAmps + inputs.turnSupplyCurrentAmps;
   }

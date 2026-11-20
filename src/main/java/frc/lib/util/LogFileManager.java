@@ -21,7 +21,9 @@ import java.util.List;
  * `/tmp/flux-robot-state`.
  */
 public final class LogFileManager {
-  private static final long MAX_STORAGE_BYTES = 500L * 1024 * 1024; // 500 MB
+  public static final long MAX_EXTERNAL_STORAGE_BYTES = 500L * 1024 * 1024; // 500 MB (/U/logs)
+  public static final long MAX_INTERNAL_STORAGE_BYTES = 120L * 1024 * 1024; // 120 MB (internal)
+  private static final String WRITE_PROBE_PREFIX = ".flux-rw-probe";
   private static final Path DEFAULT_USB_MOUNT = Path.of("/U");
   private static final Path DEFAULT_ROOT_PATH = Path.of("/");
   private static final Path PROC_MOUNTS = Path.of("/proc/mounts");
@@ -30,27 +32,41 @@ public final class LogFileManager {
 
   /**
    * Resolves `/U/logs` only if `/U` is an actually mounted, writable filesystem (never writing to
-   * an unmounted root-flash `/U` stub), else falls back to `<operatingDir>/logs`.
+   * an unmounted root-flash `/U` stub or read-only remounted FAT32 stick), else falls back to
+   * `<operatingDir>/logs` with the internal-flash {@code 120 MB} retention cap.
    */
   public static String getLogPath() {
     String overrideDir = System.getProperty("flux.logDir");
     if (overrideDir != null && !overrideDir.isBlank()) {
-      return getLogPath(new File(overrideDir.trim()), MAX_STORAGE_BYTES);
+      return getLogPath(new File(overrideDir.trim()), MAX_INTERNAL_STORAGE_BYTES);
     }
-    if (isMountedWritableDirectory(DEFAULT_USB_MOUNT, DEFAULT_ROOT_PATH)) {
-      File usbLogsDir = DEFAULT_USB_MOUNT.resolve("logs").toFile();
+    return resolveLogPath(
+        DEFAULT_USB_MOUNT,
+        DEFAULT_ROOT_PATH,
+        PROC_MOUNTS,
+        new File(Filesystem.getOperatingDirectory(), "logs"));
+  }
+
+  /**
+   * Deterministic log-path resolver applying {@link #MAX_EXTERNAL_STORAGE_BYTES} on mounted
+   * writable USB storage and {@link #MAX_INTERNAL_STORAGE_BYTES} on internal roboRIO flash.
+   */
+  public static String resolveLogPath(
+      Path usbMount, Path rootPath, Path procMountsPath, File internalLogsDir) {
+    if (isMountedWritableDirectory(usbMount, rootPath, procMountsPath)) {
+      File usbLogsDir = usbMount.resolve("logs").toFile();
       if (ensureWritableDirectory(usbLogsDir)) {
-        return getLogPath(usbLogsDir, MAX_STORAGE_BYTES);
+        return getLogPath(usbLogsDir, MAX_EXTERNAL_STORAGE_BYTES);
       }
     }
-    File localDir = new File(Filesystem.getOperatingDirectory(), "logs");
-    return getLogPath(localDir, MAX_STORAGE_BYTES);
+    return getLogPath(internalLogsDir, MAX_INTERNAL_STORAGE_BYTES);
   }
 
   /**
    * Returns true only when {@code mountPoint} is an existing writable directory backed by a
    * separate mounted filesystem (either a distinct {@link FileStore} from {@code rootPath} or an
-   * active entry in {@code /proc/mounts}).
+   * active read-write entry in {@code /proc/mounts}) and passes a real temp-file write/delete
+   * probe.
    */
   public static boolean isMountedWritableDirectory(Path mountPoint, Path rootPath) {
     return isMountedWritableDirectory(mountPoint, rootPath, PROC_MOUNTS);
@@ -67,16 +83,15 @@ public final class LogFileManager {
       if (!Files.isDirectory(realMount) || !Files.isWritable(realMount)) {
         return false;
       }
-      if (isListedInProcMounts(realMount, procMountsPath)
-          || isListedInProcMounts(mountPoint.toAbsolutePath().normalize(), procMountsPath)) {
-        return true;
-      }
-      if (rootPath != null && Files.exists(rootPath)) {
+      boolean isSeparateMount =
+          isListedInProcMounts(realMount, procMountsPath)
+              || isListedInProcMounts(mountPoint.toAbsolutePath().normalize(), procMountsPath);
+      if (!isSeparateMount && rootPath != null && Files.exists(rootPath)) {
         FileStore mountStore = Files.getFileStore(realMount);
         FileStore rootStore = Files.getFileStore(rootPath.toRealPath());
-        return !mountStore.equals(rootStore);
+        isSeparateMount = !mountStore.equals(rootStore);
       }
-      return false;
+      return isSeparateMount && probeDirectoryWritable(realMount);
     } catch (IOException ignored) {
       return false;
     }
@@ -95,12 +110,45 @@ public final class LogFileManager {
         }
         String[] parts = trimmed.split("\\s+");
         if (parts.length >= 2 && expected.equals(parts[1])) {
+          if (parts.length >= 4 && hasReadOnlyMountOption(parts[3])) {
+            return false;
+          }
           return true;
         }
       }
     } catch (IOException ignored) {
     }
     return false;
+  }
+
+  private static boolean hasReadOnlyMountOption(String optionsField) {
+    for (String opt : optionsField.split(",")) {
+      if ("ro".equals(opt.trim())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Verifies real filesystem writability via a temp-file create/write/delete probe. */
+  public static boolean probeDirectoryWritable(Path dir) {
+    if (dir == null || !Files.isDirectory(dir)) {
+      return false;
+    }
+    Path probe =
+        dir.resolve(
+            WRITE_PROBE_PREFIX + "." + ProcessHandle.current().pid() + "." + System.nanoTime());
+    try {
+      Files.write(probe, new byte[] {0x46});
+      return true;
+    } catch (IOException | SecurityException ignored) {
+      return false;
+    } finally {
+      try {
+        Files.deleteIfExists(probe);
+      } catch (IOException | SecurityException ignored) {
+      }
+    }
   }
 
   private static boolean ensureWritableDirectory(File dir) {
@@ -110,7 +158,7 @@ public final class LogFileManager {
     if (!dir.exists() && !dir.mkdirs()) {
       return false;
     }
-    return dir.isDirectory() && Files.isWritable(dir.toPath());
+    return dir.isDirectory() && probeDirectoryWritable(dir.toPath());
   }
 
   public static String getLogPath(File logDir, long maxBytes) {

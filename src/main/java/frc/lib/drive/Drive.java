@@ -6,6 +6,7 @@ import com.pathplanner.lib.config.PIDConstants;
 import com.pathplanner.lib.config.RobotConfig;
 import com.pathplanner.lib.controllers.PPHolonomicDriveController;
 import edu.wpi.first.math.Matrix;
+import edu.wpi.first.math.VecBuilder;
 import edu.wpi.first.math.estimator.SwerveDrivePoseEstimator;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
@@ -50,6 +51,8 @@ public class Drive extends SubsystemBase {
         new SwerveModulePosition(),
         new SwerveModulePosition()
       };
+  private final SwerveModulePosition[] scratchModulePositions = new SwerveModulePosition[4];
+  private final SwerveModulePosition[] scratchModuleDeltas = new SwerveModulePosition[4];
 
   private double loopPeriodSec = 0.020;
   private double maxAccelScale = 1.0;
@@ -164,25 +167,23 @@ public class Drive extends SubsystemBase {
     }
 
     for (int i = 0; i < sampleCount; i++) {
-      SwerveModulePosition[] modulePositions = new SwerveModulePosition[4];
-      SwerveModulePosition[] moduleDeltas = new SwerveModulePosition[4];
       for (int m = 0; m < 4; m++) {
-        modulePositions[m] = modules[m].getOdometryPositions()[i];
-        moduleDeltas[m] =
+        scratchModulePositions[m] = modules[m].getOdometryPositions()[i];
+        scratchModuleDeltas[m] =
             new SwerveModulePosition(
-                modulePositions[m].distanceMeters - lastModulePositions[m].distanceMeters,
-                modulePositions[m].angle);
-        lastModulePositions[m] = modulePositions[m];
+                scratchModulePositions[m].distanceMeters - lastModulePositions[m].distanceMeters,
+                scratchModulePositions[m].angle);
+        lastModulePositions[m] = scratchModulePositions[m];
       }
 
       if (gyroInputs.connected && i < gyroInputs.odometryYawPositions.length) {
         rawGyroRotation = gyroInputs.odometryYawPositions[i];
       } else {
-        Twist2d twist = kinematics.toTwist2d(moduleDeltas);
+        Twist2d twist = kinematics.toTwist2d(scratchModuleDeltas);
         rawGyroRotation = rawGyroRotation.plus(new Rotation2d(twist.dtheta));
       }
 
-      poseEstimator.updateWithTime(sampleTimestamps[i], rawGyroRotation, modulePositions);
+      poseEstimator.updateWithTime(sampleTimestamps[i], rawGyroRotation, scratchModulePositions);
       totalOdometrySamplesIntegrated++;
     }
 
@@ -345,5 +346,69 @@ public class Drive extends SubsystemBase {
 
   public SwerveConfig getConfig() {
     return config;
+  }
+
+  public int getModuleCount() {
+    return modules.length;
+  }
+
+  /** Drives a single swerve corner for sequential pit verification while stopping the other three. */
+  public void runModuleTest(int moduleIndex, SwerveModuleState state) {
+    if (moduleIndex < 0 || moduleIndex >= modules.length) {
+      throw new IllegalArgumentException("Invalid module index: " + moduleIndex);
+    }
+    for (int i = 0; i < modules.length; i++) {
+      if (i == moduleIndex) {
+        modules[i].runSetpoint(state);
+      } else {
+        modules[i].stop();
+      }
+    }
+  }
+
+  public boolean isModuleConnected(int moduleIndex) {
+    return moduleIndex >= 0 && moduleIndex < modules.length && modules[moduleIndex].isConnected();
+  }
+
+  public double getModuleVelocityMps(int moduleIndex) {
+    return (moduleIndex >= 0 && moduleIndex < modules.length)
+        ? modules[moduleIndex].getVelocityMetersPerSec()
+        : 0.0;
+  }
+
+  public double getModuleDriveStatorCurrentAmps(int moduleIndex) {
+    return (moduleIndex >= 0 && moduleIndex < modules.length)
+        ? modules[moduleIndex].getDriveStatorCurrentAmps()
+        : 0.0;
+  }
+
+  public double getModuleTurnStatorCurrentAmps(int moduleIndex) {
+    return (moduleIndex >= 0 && moduleIndex < modules.length)
+        ? modules[moduleIndex].getTurnStatorCurrentAmps()
+        : 0.0;
+  }
+
+  /**
+   * Warms up lazy thread, kinematics, pose-estimator, module simulation, and AdvantageKit struct
+   * buffers during {@code robotInit()} so tick-1 {@link #periodic()} avoids cold-JIT stalls.
+   */
+  public void warmup() {
+    PhoenixOdometryThread.getInstance();
+    for (Module m : modules) {
+      m.warmup();
+    }
+    ChassisSpeeds zero = new ChassisSpeeds();
+    ChassisSpeeds discrete = ChassisSpeeds.discretize(zero, loopPeriodSec);
+    SwerveModuleState[] states = kinematics.toSwerveModuleStates(discrete);
+    SwerveDriveKinematics.desaturateWheelSpeeds(states, config.maxLinearSpeedMps());
+    kinematics.toTwist2d(lastModulePositions);
+    SwerveDrivePoseEstimator warmupEstimator =
+        new SwerveDrivePoseEstimator(
+            kinematics, Rotation2d.kZero, lastModulePositions, Pose2d.kZero);
+    warmupEstimator.updateWithTime(0.020, Rotation2d.kZero, lastModulePositions);
+    warmupEstimator.addVisionMeasurement(Pose2d.kZero, 0.020, VecBuilder.fill(0.1, 0.1, 0.1));
+    Logger.recordOutput("Drive/Pose", getPose());
+    Logger.recordOutput("Drive/ChassisSpeeds", getChassisSpeeds());
+    Logger.recordOutput("Drive/Setpoints", states);
   }
 }

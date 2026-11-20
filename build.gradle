@@ -86,12 +86,14 @@ test {
         showCauses = true
         exceptionFormat = "short"
     }
+    outputs.upToDateWhen { false }
 }
 
 wpi.sim.addGui().defaultEnabled = true
 wpi.sim.addDriverstation()
 
 jar {
+    archiveFileName = 'Flux-RoboRIO-2027.jar'
     preserveFileTimestamps = false
     reproducibleFileOrder = true
     from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }

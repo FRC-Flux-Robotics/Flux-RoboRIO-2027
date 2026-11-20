@@ -6,6 +6,7 @@ import edu.wpi.first.apriltag.AprilTagFieldLayout;
 import edu.wpi.first.apriltag.AprilTagFields;
 import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Pose3d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
@@ -21,6 +22,8 @@ import frc.lib.commands.DriveCommands;
 import frc.lib.commands.DriveToPose;
 import frc.lib.commands.HardStopHomingCmd;
 import frc.lib.commands.PitSystemCheckCmd;
+import frc.lib.commands.PitSystemCheckCmd.PositionCheckTarget;
+import frc.lib.commands.PitSystemCheckCmd.VelocityCheckTarget;
 import frc.lib.commands.PreMatchCalibrator;
 import frc.lib.commands.ShopStressSuiteCmd;
 import frc.lib.commands.ZeroPriorBootstrapCmd;
@@ -62,6 +65,7 @@ import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.stream.Stream;
 import org.littletonrobotics.junction.Logger;
@@ -99,6 +103,9 @@ public class RobotContainer {
 
   /** Blue Alliance Octagonal Hub center in 2026 Wall/Blue coordinates (derived from AprilTag centroid). */
   public static final Translation2d HUB_TARGET_METERS = new Translation2d(4.626, 4.035);
+
+  /** Canonical Blue Alliance Hub shooting alignment pose in 2026 Wall/Blue coordinates. */
+  public static final Pose2d BLUE_HUB_ALIGN_POSE = new Pose2d(2.5, 4.1, Rotation2d.kZero);
 
   private static final int CONFIG_DISK_POLL_INTERVAL_LOOPS = 25;
 
@@ -363,23 +370,66 @@ public class RobotContainer {
     autoChooser.addOption("Hub to Depot PathPlanner Path", drive.followPathCommand("Hub to Depot"));
     autoChooser.addOption(
         "Hub DriveToPose (2.5m, 4.1m)",
-        new DriveToPose(drive, new Pose2d(2.5, 4.1, Rotation2d.kZero)));
+        Commands.defer(
+            () -> new DriveToPose(drive, getHubAlignTargetPose(FieldPositions.isRedAlliance())),
+            Set.of(drive)));
     autoChooser.addOption(
         "Shop 5x3 Shuttle Path", drive.followPathCommand("Shop_Center_Shuttle"));
     autoChooser.addOption(
         "Pre-Kickoff 2-Piece Template", drive.followPathCommand("PreKickoff_2Piece_Template"));
     autoChooser.addOption(
         "Pit System Check (20s)",
-        createPitSystemCheckCommand().onlyIf(() -> !DriverStation.isFMSAttached()));
+        createPitSystemCheckCommand().onlyIf(RobotContainer::isPitTestAllowed));
     autoChooser.addOption(
         "15-Min Floor Blitz",
         createBlitz15MinCommand(Blitz15MinCmd.DEFAULT_CHECKPOINT_PATH)
-            .onlyIf(() -> !DriverStation.isFMSAttached()));
+            .onlyIf(RobotContainer::isPitTestAllowed));
   }
 
   /** Pit, calibration, and homing triggers require non-FMS WPILib Test mode. */
   public static boolean isPitTestAllowed() {
     return !DriverStation.isFMSAttached() && DriverStation.isTest();
+  }
+
+  /**
+   * Returns the alliance-mirrored Hub shooting alignment pose using 2026 REBUILT 180-degree
+   * rotational symmetry {@code (L - x, W - y, theta + pi)} when on Red Alliance.
+   */
+  public static Pose2d getHubAlignTargetPose(boolean isRedAlliance) {
+    Pose2d activeBlue = FieldPositions.fromWallBlue(BLUE_HUB_ALIGN_POSE);
+    return isRedAlliance ? FieldPositions.mirrorRotational(activeBlue) : activeBlue;
+  }
+
+  /** Resets field-oriented heading to alliance forward while preserving current X/Y translation. */
+  public void resetFieldHeading() {
+    drive.setPose(new Pose2d(drive.getPose().getTranslation(), FieldPositions.operatorForward()));
+  }
+
+  /** Resets the 6-mechanism superstructure to {@link State#IDLE} across mode transitions. */
+  public void resetSuperstructureToIdle() {
+    superstructure.requestState(State.IDLE);
+  }
+
+  /**
+   * Selects the active battery voltage fed to {@link FaultSupervisor}: physical roboRIO hardware
+   * always uses {@link RobotController#getBatteryVoltage()} even when Ghost Superstructure mode is
+   * active on {@code CORAL} / {@code CHASSIS_3}.
+   */
+  public static double selectEffectiveBatteryVoltage(
+      boolean forceSimIo,
+      boolean isRealRobot,
+      double realBatteryVoltageV,
+      double simBatteryVoltageV) {
+    return (!forceSimIo && isRealRobot) ? realBatteryVoltageV : simBatteryVoltageV;
+  }
+
+  /** Warms up lazy math, odometry, and AdvantageKit struct buffers during {@code robotInit()}. */
+  public void warmupBeforeCompetitionLoop() {
+    drive.warmup();
+    shotCalculator.calculate(
+        drive.getPose(), new ChassisSpeeds(), FieldPositions.forAlliance(HUB_TARGET_METERS));
+    Logger.recordOutput(
+        "Superstructure/MechanismPoses3d", new Pose3d[] {Pose3d.kZero, Pose3d.kZero});
   }
 
   private void configureButtonBindings() {
@@ -410,16 +460,24 @@ public class RobotContainer {
                 () -> latestTeleopShotSolution.headingFeedforwardRadPerSec(),
                 () -> driverController.getLeftTriggerAxis() > 0.5,
                 superstructure))
-        .onFalse(Commands.runOnce(() -> superstructure.requestState(State.IDLE), superstructure));
+        .onFalse(
+            Commands.runOnce(() -> superstructure.requestState(State.IDLE), superstructure)
+                .ignoringDisable(true));
 
     driverController
         .a()
         .whileTrue(
-            new DriveToPose(
-                drive,
-                () -> new Pose2d(2.5, 4.1, Rotation2d.kZero),
-                () -> driverController.getLeftTriggerAxis() > 0.5));
+            Commands.defer(
+                () -> {
+                  Pose2d targetPose = getHubAlignTargetPose(FieldPositions.isRedAlliance());
+                  return new DriveToPose(
+                      drive,
+                      () -> targetPose,
+                      () -> driverController.getLeftTriggerAxis() > 0.5);
+                },
+                Set.of(drive)));
     driverController.b().whileTrue(Commands.run(drive::stopWithX, drive));
+    driverController.y().onTrue(Commands.runOnce(this::resetFieldHeading).ignoringDisable(true));
     driverController.start().onTrue(createPitSystemCheckCommand().onlyIf(pitTestAllowed));
     driverController
         .back()
@@ -429,18 +487,31 @@ public class RobotContainer {
     operatorController
         .leftBumper()
         .onTrue(Commands.runOnce(() -> superstructure.requestState(State.INTAKING), superstructure))
-        .onFalse(Commands.runOnce(() -> superstructure.requestState(State.IDLE), superstructure));
+        .onFalse(
+            Commands.runOnce(() -> superstructure.requestState(State.IDLE), superstructure)
+                .ignoringDisable(true));
     operatorController
         .rightBumper()
         .onTrue(Commands.runOnce(() -> superstructure.requestState(State.OUTTAKING), superstructure))
-        .onFalse(Commands.runOnce(() -> superstructure.requestState(State.IDLE), superstructure));
+        .onFalse(
+            Commands.runOnce(() -> superstructure.requestState(State.IDLE), superstructure)
+                .ignoringDisable(true));
     operatorController.y().onTrue(createShotCalibrationCommand().onlyIf(pitTestAllowed));
     operatorController.start().onTrue(new HardStopHomingCmd(hood).onlyIf(pitTestAllowed));
   }
 
   public PitSystemCheckCmd createPitSystemCheckCommand() {
     return new PitSystemCheckCmd(
-        drive, List.of(tilter, hood), List.of(intake, indexer, feeder, shooter));
+        drive,
+        List.of(
+            new PositionCheckTarget(tilter, -2.0, 0.0), new PositionCheckTarget(hood, 2.0, 0.0)),
+        List.of(
+            new VelocityCheckTarget(intake, 20.0),
+            new VelocityCheckTarget(indexer, 20.0),
+            new VelocityCheckTarget(feeder, -20.0),
+            new VelocityCheckTarget(shooter, 25.0)),
+        this::resetSuperstructureToIdle,
+        superstructure);
   }
 
   public ShotCalibrationCmd createShotCalibrationCommand() {
@@ -583,9 +654,8 @@ public class RobotContainer {
     double simVBat =
         virtualBatterySim.update(drive.getTotalSupplyCurrentAmps(), ghostSupplyAmps);
     double effectiveVBat =
-        (!forceSimIo && RobotBase.isReal() && !ghostSuperstructureActive)
-            ? RobotController.getBatteryVoltage()
-            : simVBat;
+        selectEffectiveBatteryVoltage(
+            forceSimIo, RobotBase.isReal(), RobotController.getBatteryVoltage(), simVBat);
     double effectiveRintMohm =
         batteryIo.isHealthy()
             ? batteryIo.getInternalResistanceMilliOhms()

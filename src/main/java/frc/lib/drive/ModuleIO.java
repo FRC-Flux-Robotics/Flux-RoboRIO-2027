@@ -101,4 +101,6 @@ public interface ModuleIO {
   default void setDriveStatorCurrentLimit(double statorLimitAmps) {}
 
   default void stop() {}
+
+  default void warmup() {}
 }

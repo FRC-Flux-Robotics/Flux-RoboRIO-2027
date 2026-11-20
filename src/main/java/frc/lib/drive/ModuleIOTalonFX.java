@@ -27,6 +27,7 @@ import edu.wpi.first.units.measure.Voltage;
 import frc.lib.drive.SwerveConfig.CornerConfig;
 import frc.lib.util.PhoenixSignals;
 import frc.lib.util.PhoenixUtil;
+import java.util.Locale;
 import java.util.Queue;
 
 /**
@@ -132,8 +133,12 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
             : ChassisReference.CounterClockwise_Positive;
     driveTalon.setPosition(0.0);
 
+    String busLower = swerveConfig.canBus().toLowerCase(Locale.ROOT);
+    boolean can20Bus = "rio".equals(busLower) || busLower.startsWith("can_s");
     boolean proCanFdReady =
-        bus.isNetworkFD() && Boolean.TRUE.equals(turnTalon.getIsProLicensed().refresh().getValue());
+        !can20Bus
+            && bus.isNetworkFD()
+            && Boolean.TRUE.equals(turnTalon.getIsProLicensed().refresh().getValue());
     TalonFXConfiguration turnCfg = new TalonFXConfiguration();
     turnCfg.MotorOutput.NeutralMode = NeutralModeValue.Brake;
     turnCfg.MotorOutput.Inverted =
@@ -230,6 +235,15 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
         odomThread.registerLatencyCompensatedSignal(drivePosition, driveVelocity);
     turnPositionQueue =
         odomThread.registerLatencyCompensatedSignal(turnPosition, turnVelocity);
+
+    PhoenixUtil.tryUntilOk(
+        "Module-" + corner.name() + "-CANcoderFeedbackFreq",
+        () ->
+            BaseStatusSignal.setUpdateFrequencyForAll(
+                PhoenixOdometryThread.ODOMETRY_FREQUENCY_HZ,
+                cancoder.getPosition(),
+                cancoder.getVelocity()),
+        3);
 
     PhoenixUtil.tryUntilOk(
         "Module-" + corner.name() + "-OptimizeBus",

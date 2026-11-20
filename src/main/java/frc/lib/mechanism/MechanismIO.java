@@ -46,6 +46,10 @@ public interface MechanismIO {
 
   default void setVoltage(double volts) {}
 
+  default void setHomingVoltage(double volts) {
+    setVoltage(volts);
+  }
+
   default void setPID(double kP, double kI, double kD, double kS, double kV, double kG) {}
 
   default void stop() {}

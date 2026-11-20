@@ -21,6 +21,7 @@ import edu.wpi.first.math.system.plant.LinearSystemId;
 import edu.wpi.first.wpilibj.simulation.DCMotorSim;
 import edu.wpi.first.wpilibj.simulation.DriverStationSim;
 import edu.wpi.first.wpilibj.simulation.SimHooks;
+import frc.lib.commands.HardStopHomingCmd;
 import frc.lib.drive.Drive;
 import frc.lib.drive.GyroIO.GyroIOInputs;
 import frc.lib.drive.GyroIOPigeon2;
@@ -28,11 +29,11 @@ import frc.lib.drive.ModuleIO.ModuleIOInputs;
 import frc.lib.drive.ModuleIOTalonFX;
 import frc.lib.drive.PhoenixOdometryThread;
 import frc.lib.drive.SwerveConfig;
-import frc.lib.drive.SwerveConfig.CornerConfig;
 import frc.lib.fluxfig.FluxFig;
 import frc.lib.fluxfig.FluxFig.MechanismSpec;
 import frc.lib.mechanism.MechanismIO.MechanismIOInputs;
 import frc.lib.mechanism.MechanismIOTalonFX;
+import frc.lib.mechanism.PositionMechanism;
 import frc.lib.util.PhoenixSignals;
 import frc.lib.util.PhoenixUtil;
 import java.nio.file.Paths;
@@ -184,6 +185,7 @@ public class Tier3CtreSimHardwareTest {
       throws InterruptedException {
     FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
     MechanismSpec baseSpec = fig.getMechanismSpec("COMP_2027", "SwerveDriveFL");
+    double gearRatio = baseSpec.gearRatio();
     MechanismSpec velocitySpec =
         new MechanismSpec(
             baseSpec.robot(),
@@ -202,7 +204,11 @@ public class Tier3CtreSimHardwareTest {
             baseSpec.kA(),
             baseSpec.kG(),
             baseSpec.minPosRot(),
-            baseSpec.maxPosRot());
+            baseSpec.maxPosRot(),
+            -1,
+            false,
+            baseSpec.motorInverted(),
+            gearRatio);
 
     DriverStationSim.setEnabled(true);
     DriverStationSim.notifyNewData();
@@ -213,14 +219,14 @@ public class Tier3CtreSimHardwareTest {
 
       DCMotor kraken = DCMotor.getKrakenX60Foc(1);
       DCMotorSim plant =
-          new DCMotorSim(LinearSystemId.createDCMotorSystem(kraken, 0.0015, 1.0), kraken);
+          new DCMotorSim(LinearSystemId.createDCMotorSystem(kraken, 0.025, gearRatio), kraken);
 
       MechanismIOInputs inputs = new MechanismIOInputs();
-      double targetRps = 65.0;
+      double targetRps = 12.0; // Geared wheel RPS (~3.83 m/s on 2-inch radius wheels)
 
       double peakStatorAmps = 0.0;
       double dt = 0.004; // 250 Hz physics loop
-      for (int step = 0; step < 250; step++) {
+      for (int step = 0; step < 300; step++) {
         Unmanaged.feedEnable(100);
         io.setVelocity(targetRps);
         Thread.sleep(2);
@@ -229,10 +235,10 @@ public class Tier3CtreSimHardwareTest {
         plant.setInputVoltage(motorVoltage);
         plant.update(dt);
 
-        double posRot = plant.getAngularPositionRotations();
-        double velRps = plant.getAngularVelocityRPM() / 60.0;
-        simState.setRawRotorPosition(posRot);
-        simState.setRotorVelocity(velRps);
+        double wheelPosRot = plant.getAngularPositionRotations();
+        double wheelVelRps = plant.getAngularVelocityRPM() / 60.0;
+        simState.setRawRotorPosition(wheelPosRot * gearRatio);
+        simState.setRotorVelocity(wheelVelRps * gearRatio);
 
         PhoenixSignals.refreshAll();
         io.updateInputs(inputs);
@@ -270,6 +276,282 @@ public class Tier3CtreSimHardwareTest {
     } finally {
       DriverStationSim.setEnabled(false);
       DriverStationSim.notifyNewData();
+    }
+  }
+
+  @Test
+  public void testGearedFuelSwerveDriveTracksFullStickVelocityInCtreSim()
+      throws InterruptedException {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    MechanismSpec fuelDriveSpec = fig.getMechanismSpec("FUEL", "SwerveDriveFL");
+    assertEquals(6.3947, fuelDriveSpec.gearRatio(), 1e-3);
+    assertEquals(0.79, fuelDriveSpec.kV(), 1e-3);
+    assertEquals(0.90, fuelDriveSpec.kP(), 1e-3);
+
+    SwerveConfig baseCfg = SwerveConfig.fromFluxFig(fig, "FUEL");
+    SwerveConfig rioCfg =
+        new SwerveConfig(
+            "rio",
+            baseCfg.pigeonId(),
+            baseCfg.trackWidthMeters(),
+            baseCfg.wheelBaseMeters(),
+            baseCfg.wheelRadiusMeters(),
+            baseCfg.driveGearRatio(),
+            baseCfg.turnGearRatio(),
+            baseCfg.maxLinearSpeedMps(),
+            baseCfg.maxAngularSpeedRadPerSec(),
+            baseCfg.driveStatorLimitAmps(),
+            baseCfg.driveSupplyLimitAmps(),
+            baseCfg.driveSlipCurrentAmps(),
+            baseCfg.turnStatorLimitAmps(),
+            baseCfg.turnSupplyLimitAmps(),
+            baseCfg.driveKp(),
+            baseCfg.driveKi(),
+            baseCfg.driveKd(),
+            baseCfg.driveKs(),
+            baseCfg.driveKv(),
+            baseCfg.driveKa(),
+            baseCfg.turnKp(),
+            baseCfg.turnKd(),
+            baseCfg.corners());
+
+    DriverStationSim.setEnabled(true);
+    DriverStationSim.notifyNewData();
+
+    try (ModuleIOTalonFX modFl = new ModuleIOTalonFX(rioCfg, rioCfg.corners()[0])) {
+      TalonFXSimState driveSim = modFl.getDriveTalon().getSimState();
+      driveSim.setSupplyVoltage(12.2);
+
+      DCMotor kraken = DCMotor.getKrakenX60Foc(1);
+      double gearRatio = rioCfg.driveGearRatio();
+      DCMotorSim wheelPlant =
+          new DCMotorSim(LinearSystemId.createDCMotorSystem(kraken, 0.025, gearRatio), kraken);
+
+      double targetLinearMps = 4.5;
+      double targetRadPerSec = targetLinearMps / rioCfg.wheelRadiusMeters();
+      ModuleIOInputs inputs = new ModuleIOInputs();
+
+      for (int step = 0; step < 350; step++) {
+        Unmanaged.feedEnable(100);
+        modFl.setDriveVelocity(targetRadPerSec);
+        Thread.sleep(2);
+
+        double motorVolts = driveSim.getMotorVoltage();
+        wheelPlant.setInputVoltage(motorVolts);
+        wheelPlant.update(0.004);
+
+        double wheelPosRot = wheelPlant.getAngularPositionRotations();
+        double wheelVelRps = wheelPlant.getAngularVelocityRPM() / 60.0;
+        driveSim.setRawRotorPosition(wheelPosRot * gearRatio);
+        driveSim.setRotorVelocity(wheelVelRps * gearRatio);
+
+        PhoenixSignals.refreshAll();
+        modFl.updateInputs(inputs);
+      }
+
+      double actualLinearMps = inputs.driveVelocityRadPerSec * rioCfg.wheelRadiusMeters();
+      double actualWheelRps = inputs.driveVelocityRadPerSec / (2.0 * Math.PI);
+      assertTrue(
+          actualLinearMps >= 4.15 && actualLinearMps <= 4.85,
+          "Geared FUEL SwerveDriveFL must track full-stick 4.5 m/s (~14.1 wheel RPS), not stall at"
+              + " ~1.55 m/s (measured "
+              + actualLinearMps
+              + " m/s, "
+              + actualWheelRps
+              + " RPS)");
+    } finally {
+      DriverStationSim.setEnabled(false);
+      DriverStationSim.notifyNewData();
+    }
+  }
+
+  @Test
+  public void testHoodHomingIgnoresReverseSoftLimitAtZeroRotInCtreSim()
+      throws InterruptedException {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    MechanismSpec baseHood = fig.getMechanismSpec("FUEL", "Hood");
+    MechanismSpec rioHood =
+        new MechanismSpec(
+            baseHood.robot(),
+            baseHood.mechanism(),
+            43,
+            "rio",
+            baseHood.statorLimitAmps(),
+            baseHood.supplyLimitAmps(),
+            baseHood.slipCurrentAmps(),
+            baseHood.gravityType(),
+            baseHood.kP(),
+            baseHood.kI(),
+            baseHood.kD(),
+            baseHood.kS(),
+            baseHood.kV(),
+            baseHood.kA(),
+            baseHood.kG(),
+            baseHood.minPosRot(),
+            baseHood.maxPosRot(),
+            -1,
+            false,
+            baseHood.motorInverted(),
+            baseHood.gearRatio());
+
+    DriverStationSim.setEnabled(true);
+    DriverStationSim.notifyNewData();
+
+    try (MechanismIOTalonFX hoodIo = new MechanismIOTalonFX(rioHood)) {
+      TalonFXConfiguration cfg = hoodIo.readAppliedConfig();
+      assertTrue(
+          cfg.SoftwareLimitSwitch.ReverseSoftLimitEnable,
+          "FUEL Hood must keep ReverseSoftLimitEnable active");
+      assertEquals(0.0, cfg.SoftwareLimitSwitch.ReverseSoftLimitThreshold, 1e-4);
+
+      TalonFXSimState simState = hoodIo.getMotor().getSimState();
+      simState.setSupplyVoltage(12.2);
+      simState.setRawRotorPosition(-0.02);
+      simState.setRotorVelocity(0.0);
+      Thread.sleep(30);
+
+      // Normal open-loop reverse voltage at/past the 0.0 rot reverse soft limit must stay blocked
+      for (int i = 0; i < 20; i++) {
+        Unmanaged.feedEnable(100);
+        hoodIo.setVoltage(HardStopHomingCmd.DEFAULT_HOMING_VOLTS);
+        Thread.sleep(3);
+      }
+      assertEquals(
+          0.0,
+          simState.getMotorVoltage(),
+          0.05,
+          "Normal setVoltage() must remain blocked by reverse soft limit at/below 0.0 rot");
+
+      // HardStopHomingCmd starting from 0.0 rot must ignore soft limits and drive into hard stop
+      PositionMechanism hoodMech = new PositionMechanism(hoodIo, rioHood);
+      HardStopHomingCmd homingCmd = new HardStopHomingCmd(hoodMech);
+      simState.setRawRotorPosition(0.0);
+      simState.setRotorVelocity(0.0);
+      homingCmd.initialize();
+
+      double mostNegativeVolts = 0.0;
+      double mostNegativePastSoftLimitVolts = 0.0;
+      for (int i = 0; i < 120 && !homingCmd.isFinished(); i++) {
+        Unmanaged.feedEnable(100);
+        double simPosRot = (i == 0) ? 0.0 : -0.02;
+        simState.setRawRotorPosition(simPosRot);
+        simState.setRotorVelocity(0.0);
+        homingCmd.execute();
+        Thread.sleep(4);
+        PhoenixSignals.refreshAll();
+        hoodMech.periodic();
+        double v = simState.getMotorVoltage();
+        mostNegativeVolts = Math.min(mostNegativeVolts, v);
+        if (i > 0) {
+          mostNegativePastSoftLimitVolts = Math.min(mostNegativePastSoftLimitVolts, v);
+        }
+      }
+      homingCmd.end(false);
+
+      assertTrue(
+          mostNegativeVolts <= -0.8 && mostNegativePastSoftLimitVolts <= -0.8,
+          "HardStopHomingCmd must apply non-zero negative voltage across the 0.0 rot soft limit"
+              + " (measured min="
+              + mostNegativeVolts
+              + " V, pastSoftLimit="
+              + mostNegativePastSoftLimitVolts
+              + " V)");
+      assertTrue(homingCmd.isFinished(), "Hood homing command must finish without timing out");
+      assertTrue(homingCmd.isHomed(), "Hood homing starting at 0.0 rot must succeed");
+    } finally {
+      DriverStationSim.setEnabled(false);
+      DriverStationSim.notifyNewData();
+    }
+  }
+
+  @Test
+  public void testOptimizeBusPreservesCancoderAndFollowerLeaderFrequenciesInCtreSim() {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    SwerveConfig baseCfg = SwerveConfig.fromFluxFig(fig, "FUEL");
+    SwerveConfig rioCfg =
+        new SwerveConfig(
+            "rio",
+            baseCfg.pigeonId(),
+            baseCfg.trackWidthMeters(),
+            baseCfg.wheelBaseMeters(),
+            baseCfg.wheelRadiusMeters(),
+            baseCfg.driveGearRatio(),
+            baseCfg.turnGearRatio(),
+            baseCfg.maxLinearSpeedMps(),
+            baseCfg.maxAngularSpeedRadPerSec(),
+            baseCfg.driveStatorLimitAmps(),
+            baseCfg.driveSupplyLimitAmps(),
+            baseCfg.driveSlipCurrentAmps(),
+            baseCfg.turnStatorLimitAmps(),
+            baseCfg.turnSupplyLimitAmps(),
+            baseCfg.driveKp(),
+            baseCfg.driveKi(),
+            baseCfg.driveKd(),
+            baseCfg.driveKs(),
+            baseCfg.driveKv(),
+            baseCfg.driveKa(),
+            baseCfg.turnKp(),
+            baseCfg.turnKd(),
+            baseCfg.corners());
+
+    MechanismSpec baseShooter = fig.getMechanismSpec("FUEL", "Shooter");
+    MechanismSpec rioShooter =
+        new MechanismSpec(
+            baseShooter.robot(),
+            baseShooter.mechanism(),
+            45,
+            "rio",
+            baseShooter.statorLimitAmps(),
+            baseShooter.supplyLimitAmps(),
+            baseShooter.slipCurrentAmps(),
+            baseShooter.gravityType(),
+            baseShooter.kP(),
+            baseShooter.kI(),
+            baseShooter.kD(),
+            baseShooter.kS(),
+            baseShooter.kV(),
+            baseShooter.kA(),
+            baseShooter.kG(),
+            baseShooter.minPosRot(),
+            baseShooter.maxPosRot(),
+            46,
+            true,
+            baseShooter.motorInverted(),
+            baseShooter.gearRatio());
+
+    try (ModuleIOTalonFX modFl = new ModuleIOTalonFX(rioCfg, rioCfg.corners()[0]);
+        MechanismIOTalonFX shooterIo = new MechanismIOTalonFX(rioShooter)) {
+      double cancoderPosHz = modFl.getCancoder().getPosition().getAppliedUpdateFrequency();
+      double cancoderVelHz = modFl.getCancoder().getVelocity().getAppliedUpdateFrequency();
+      assertTrue(
+          cancoderPosHz >= 100.0,
+          "Swerve CANcoder position frequency must remain >= 100 Hz after optimizeBus (got "
+              + cancoderPosHz
+              + " Hz)");
+      assertTrue(
+          cancoderVelHz >= 100.0,
+          "Swerve CANcoder velocity frequency must remain >= 100 Hz after optimizeBus (got "
+              + cancoderVelHz
+              + " Hz)");
+
+      double dutyHz = shooterIo.getMotor().getDutyCycle().getAppliedUpdateFrequency();
+      double voltsHz = shooterIo.getMotor().getMotorVoltage().getAppliedUpdateFrequency();
+      double torqueHz = shooterIo.getMotor().getTorqueCurrent().getAppliedUpdateFrequency();
+      assertTrue(
+          dutyHz >= 100.0,
+          "Shooter leader DutyCycle frequency must remain >= 100 Hz for follower (got "
+              + dutyHz
+              + " Hz)");
+      assertTrue(
+          voltsHz >= 100.0,
+          "Shooter leader MotorVoltage frequency must remain >= 100 Hz for follower (got "
+              + voltsHz
+              + " Hz)");
+      assertTrue(
+          torqueHz >= 100.0,
+          "Shooter leader TorqueCurrent frequency must remain >= 100 Hz for follower (got "
+              + torqueHz
+              + " Hz)");
     }
   }
 

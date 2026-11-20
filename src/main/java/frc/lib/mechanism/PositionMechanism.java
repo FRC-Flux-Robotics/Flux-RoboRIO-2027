@@ -69,9 +69,14 @@ public class PositionMechanism extends SubsystemBase {
     io.setPosition(targetPosition);
   }
 
-  /** Commands open-loop voltage directly (for current-stall homing or characterization). */
+  /** Commands open-loop voltage directly (for characterization). */
   public void setVoltage(double volts) {
     io.setVoltage(volts);
+  }
+
+  /** Commands open-loop voltage while ignoring software limits (for hard-stop homing). */
+  public void setHomingVoltage(double volts) {
+    io.setHomingVoltage(volts);
   }
 
   public void stop() {

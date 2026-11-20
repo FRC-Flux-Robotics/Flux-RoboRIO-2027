@@ -42,6 +42,8 @@ public class MechanismIOTalonFX implements MechanismIO, AutoCloseable {
   private final PositionVoltage positionRequest = new PositionVoltage(0).withSlot(0);
   private final VelocityVoltage velocityRequest = new VelocityVoltage(0).withSlot(0);
   private final VoltageOut voltageRequest = new VoltageOut(0);
+  private final VoltageOut homingVoltageRequest =
+      new VoltageOut(0).withIgnoreSoftwareLimits(true);
   private final NeutralOut neutralRequest = new NeutralOut();
   private final Slot0Configs slot0Configs = new Slot0Configs();
 
@@ -165,6 +167,15 @@ public class MechanismIOTalonFX implements MechanismIO, AutoCloseable {
       followerSupplyCurrent = follower.getSupplyCurrent();
       BaseStatusSignal.setUpdateFrequencyForAll(
           50.0, followerStatorCurrent, followerSupplyCurrent);
+      PhoenixUtil.tryUntilOk(
+          "Mech-" + spec.mechanism() + "-FollowerLeaderFreq",
+          () ->
+              BaseStatusSignal.setUpdateFrequencyForAll(
+                  200.0,
+                  motor.getDutyCycle(),
+                  voltage,
+                  motor.getTorqueCurrent()),
+          3);
       signalGroup =
           PhoenixSignals.register(
               spec.canBus(),
@@ -245,6 +256,11 @@ public class MechanismIOTalonFX implements MechanismIO, AutoCloseable {
   @Override
   public void setVoltage(double volts) {
     motor.setControl(voltageRequest.withOutput(volts));
+  }
+
+  @Override
+  public void setHomingVoltage(double volts) {
+    motor.setControl(homingVoltageRequest.withOutput(volts));
   }
 
   @Override

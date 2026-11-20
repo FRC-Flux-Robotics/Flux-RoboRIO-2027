@@ -470,14 +470,15 @@ public class Tier1ArchitectureHygieneTest {
                 "COMP_2027,ElevatorLeader,10,can_s2,60.0,40.0,60.0,ELEVATOR_STATIC,2.40,0.0,0.08,0.18,0.115,0.012,0.38,0.0,48.5,11,false,false,1.0")
             && mechanismsCsv.contains("COMP_2027,IntakeRoller,14,can_s2")
             && mechanismsCsv.contains("COMP_2027,SwerveDriveFL")
+            && mechanismsCsv.contains("FUEL,SwerveDriveFL,1,Drivetrain,60.0,40.0,60.0,NONE,0.90,0.0,0.0,0.14,0.79,0.10,0.0")
             && mechanismsCsv.contains("FUEL,Intake,1,Mech")
-            && mechanismsCsv.contains("FUEL,Tilter,20,Mech")
+            && mechanismsCsv.contains("FUEL,Tilter,20,Mech,50.0,40.0,50.0,NONE,2.40,0.0,0.10,0.12,0.15,0.010,0.0")
             && mechanismsCsv.contains("FUEL,Indexer,4,Mech")
             && mechanismsCsv.contains("FUEL,Feeder,3,Mech")
             && mechanismsCsv.contains("FUEL,Shooter,11,Mech")
-            && mechanismsCsv.contains("FUEL,Hood,12,Mech")
+            && mechanismsCsv.contains("FUEL,Hood,12,Mech,40.0,25.0,40.0,NONE,2.80,0.0,0.05,0.16,0.150,0.010,0.0")
             && !mechanismsCsv.contains(",6.75"),
-        "mechanisms.csv must use the 21-column schema with all 6 FUEL shooting mechanisms, ElevatorLeader followerMotorId=11, and 6.3947 swerve gearRatio");
+        "mechanisms.csv must use the 21-column schema with wheel-RPS swerve gains, NONE/0.0 gravity on geared FUEL Tilter/Hood, all 6 FUEL shooting mechanisms, ElevatorLeader followerMotorId=11, and 6.3947 swerve gearRatio");
 
     String rangeTableCsv =
         Files.readString(

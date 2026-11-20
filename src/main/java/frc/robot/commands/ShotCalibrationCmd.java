@@ -18,10 +18,10 @@ import org.littletonrobotics.junction.Logger;
  * 2026 {@code FUEL}-only automated range-table calibration command ({@code ShotCalibrationCmd}).
  *
  * <p>Steps through 5 target distances (or records the current distance to the Hub), commands the
- * {@link Superstructure} to {@code PREPPING_SHOT} / {@code SHOOTING}, and records verified {@code
- * (distanceMeters, shooterRps, hoodRotations, timeOfFlightSeconds)} calibration rows to {@code
- * ShotCalibration/*} so `FluxProcessor --calibrate-sim` or `FluxFig` can promote them into {@code
- * range_table.csv}.
+ * {@link Superstructure} to {@code PREPPING_SHOT} (never feeding the hopper), and records verified
+ * {@code (distanceMeters, shooterRps, hoodRotations, timeOfFlightSeconds)} calibration rows to
+ * {@code ShotCalibration/*} so `FluxProcessor --calibrate-sim` or `FluxFig` can promote them into
+ * {@code range_table.csv}.
  */
 public class ShotCalibrationCmd extends Command {
   public static final double[] CALIBRATION_DISTANCES_METERS = {1.22, 1.93, 2.84, 3.76, 4.67};
@@ -77,7 +77,7 @@ public class ShotCalibrationCmd extends Command {
             MathUtil.angleModulus(
                 sol.driveAimHeading().minus(drive.getPose().getRotation()).getRadians()));
     superstructure.applyShotSolution(
-        sol, true, headingErrRad, shotCalculator.isInRange(sol.effectiveDistanceMeters()));
+        sol, false, headingErrRad, shotCalculator.isInRange(sol.effectiveDistanceMeters()));
 
     if (loopCount % LOOPS_PER_DISTANCE_STEP == 0) {
       String row =

@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -186,13 +187,46 @@ public class DesktopWpilogTelemetryTest {
         scan.hasEntryEndingWith("Performance/TotalLoopMs"),
         "Performance/TotalLoopMs must be logged");
 
+    List<Double> totalLoopSamples = scan.doubleSeriesEndingWith("Performance/TotalLoopMs");
+    assertTrue(
+        totalLoopSamples.size() > 20,
+        "Expected > 20 Performance/TotalLoopMs samples (got " + totalLoopSamples.size() + ")");
+    int warmupTicks = Math.min(5, totalLoopSamples.size() - 1);
+    double tick1LoopMs = totalLoopSamples.get(0);
+    double maxPostBootLoopMs = 0.0;
+    int steadyStateOverruns = 0;
+    for (int i = warmupTicks; i < totalLoopSamples.size(); i++) {
+      double ms = totalLoopSamples.get(i);
+      maxPostBootLoopMs = Math.max(maxPostBootLoopMs, ms);
+      if (ms >= 20.0) {
+        steadyStateOverruns++;
+      }
+    }
+    assertTrue(
+        tick1LoopMs < 500.0,
+        "Tick-1 loop time must stay well below multi-second startup stall (actual="
+            + tick1LoopMs
+            + " ms)");
+    assertTrue(
+        maxPostBootLoopMs < 20.0,
+        "Post-boot Performance/TotalLoopMs must stay < 20.0 ms with zero steady-state overruns"
+            + " (maxPostBootLoopMs="
+            + maxPostBootLoopMs
+            + " ms, overruns="
+            + steadyStateOverruns
+            + ")");
+
     System.out.printf(
-        "[verifyWpilog] PASS: %s (%d bytes, %.2fs, %d topics, ConfigSHA256=%s)%n",
+        "[verifyWpilog] PASS: %s (%d bytes, %.2fs, %d topics, ConfigSHA256=%s, tick1=%.2fms,"
+            + " maxPostBoot=%.2fms, overruns=%d)%n",
         logFile.getFileName(),
         Files.size(logFile),
         parsed.durationSeconds(),
         scan.entryNames.size(),
-        loggedConfigSha);
+        loggedConfigSha,
+        tick1LoopMs,
+        maxPostBootLoopMs,
+        steadyStateOverruns);
   }
 
   private record WpilogScan(
@@ -200,7 +234,8 @@ public class DesktopWpilogTelemetryTest {
       Map<Integer, String> entryTypes,
       Map<String, Integer> sampleCounts,
       Map<String, String> stringValues,
-      Map<String, Integer> maxDoubleArrayLen) {
+      Map<String, Integer> maxDoubleArrayLen,
+      Map<String, List<Double>> doubleSeries) {
     boolean hasEntryEndingWith(String suffix) {
       for (Map.Entry<String, Integer> e : sampleCounts.entrySet()) {
         if (e.getKey().endsWith(suffix) && e.getValue() > 0) {
@@ -218,6 +253,15 @@ public class DesktopWpilogTelemetryTest {
       }
       return false;
     }
+
+    List<Double> doubleSeriesEndingWith(String suffix) {
+      for (Map.Entry<String, List<Double>> e : doubleSeries.entrySet()) {
+        if (e.getKey().endsWith(suffix)) {
+          return e.getValue();
+        }
+      }
+      return List.of();
+    }
   }
 
   private static WpilogScan scanWpilogEntries(Path file) throws IOException {
@@ -234,6 +278,7 @@ public class DesktopWpilogTelemetryTest {
     Map<String, Integer> sampleCounts = new LinkedHashMap<>();
     Map<String, String> stringValues = new LinkedHashMap<>();
     Map<String, Integer> maxDoubleArrayLen = new LinkedHashMap<>();
+    Map<String, List<Double>> doubleSeries = new LinkedHashMap<>();
 
     while (pos + 4 <= data.length) {
       int hdr = data[pos++] & 0xFF;
@@ -273,6 +318,8 @@ public class DesktopWpilogTelemetryTest {
           sampleCounts.merge(name, 1, Integer::sum);
           if ("string".equals(type)) {
             stringValues.put(name, new String(data, pos, sz, StandardCharsets.UTF_8));
+          } else if ("double".equals(type) && sz == 8) {
+            doubleSeries.computeIfAbsent(name, k -> new ArrayList<>()).add(buf.getDouble(pos));
           } else if ("double[]".equals(type)) {
             int arrLen = sz / 8;
             maxDoubleArrayLen.merge(name, arrLen, Math::max);
@@ -281,7 +328,8 @@ public class DesktopWpilogTelemetryTest {
       }
       pos += sz;
     }
-    return new WpilogScan(entryNames, entryTypes, sampleCounts, stringValues, maxDoubleArrayLen);
+    return new WpilogScan(
+        entryNames, entryTypes, sampleCounts, stringValues, maxDoubleArrayLen, doubleSeries);
   }
 
   private static long readUnsignedLe(byte[] data, int offset, int len) {

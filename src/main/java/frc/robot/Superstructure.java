@@ -77,6 +77,13 @@ public class Superstructure extends SubsystemBase {
   private boolean shotInRange = true;
   private int virtualGamePieceCount = 1;
   private boolean shotDischargedInCurrentBurst = false;
+  private boolean pendingTunableRefresh = false;
+  private boolean intakeUnjamming = false;
+  private double intakeUnjamVolts = 0.0;
+  private boolean indexerUnjamming = false;
+  private double indexerUnjamVolts = 0.0;
+  private boolean feederUnjamming = false;
+  private double feederUnjamVolts = 0.0;
 
   public Superstructure(
       VelocityMechanism intake,
@@ -103,8 +110,12 @@ public class Superstructure extends SubsystemBase {
     if (desiredState != State.SHOOTING) {
       shotDischargedInCurrentBurst = false;
     }
+    if (desiredState == State.IDLE) {
+      targetShooterRps = 0.0;
+      targetHoodRot = 0.0;
+    }
     state = desiredState;
-    applyStateSetpoints();
+    applyStateSetpoints(false);
   }
 
   /** Updates the latest chassis heading error and ballistic range gate for {@link #isReadyToFire()}. */
@@ -133,7 +144,7 @@ public class Superstructure extends SubsystemBase {
       shotDischargedInCurrentBurst = false;
     }
     state = nextState;
-    applyStateSetpoints();
+    applyStateSetpoints(false);
   }
 
   public void prepShot(double shooterRps, double hoodRotations) {
@@ -141,7 +152,7 @@ public class Superstructure extends SubsystemBase {
     targetHoodRot = hoodRotations;
     shotDischargedInCurrentBurst = false;
     state = State.PREPPING_SHOT;
-    applyStateSetpoints();
+    applyStateSetpoints(false);
   }
 
   public void shoot(double shooterRps, double hoodRotations) {
@@ -158,12 +169,33 @@ public class Superstructure extends SubsystemBase {
       shotDischargedInCurrentBurst = false;
     }
     state = State.SHOOTING;
-    applyStateSetpoints();
+    applyStateSetpoints(false);
   }
 
-  private void applyStateSetpoints() {
+  private void clearJamChannel(int channel) {
+    faultSupervisor.filterMechanismCommandVoltage(channel, 0.0, 0.0, 0.0);
+    if (channel == FaultSupervisor.JAM_CHANNEL_INTAKE) {
+      intakeUnjamming = false;
+      intakeUnjamVolts = 0.0;
+    } else if (channel == FaultSupervisor.JAM_CHANNEL_INDEXER) {
+      indexerUnjamming = false;
+      indexerUnjamVolts = 0.0;
+    } else if (channel == FaultSupervisor.JAM_CHANNEL_FEEDER) {
+      feederUnjamming = false;
+      feederUnjamVolts = 0.0;
+    }
+  }
+
+  private void clearAllJamChannels() {
+    clearJamChannel(FaultSupervisor.JAM_CHANNEL_INTAKE);
+    clearJamChannel(FaultSupervisor.JAM_CHANNEL_INDEXER);
+    clearJamChannel(FaultSupervisor.JAM_CHANNEL_FEEDER);
+  }
+
+  private void applyStateSetpoints(boolean tickJamSupervisor) {
     switch (state) {
       case IDLE -> {
+        clearAllJamChannels();
         intake.stop();
         indexer.stop();
         feeder.stop();
@@ -172,28 +204,38 @@ public class Superstructure extends SubsystemBase {
         hood.setPosition(0.0);
       }
       case INTAKING -> {
+        clearJamChannel(FaultSupervisor.JAM_CHANNEL_FEEDER);
         tilter.setPosition(tilterDeployRot.get());
-        double filteredIntakeV =
-            faultSupervisor.filterMechanismCommandVoltage(
-                FaultSupervisor.JAM_CHANNEL_INTAKE,
-                8.0,
-                intake.getStatorCurrentAmps(),
-                intake.getVelocity());
-        if (faultSupervisor.isChannelUnjamming(FaultSupervisor.JAM_CHANNEL_INTAKE)
-            || filteredIntakeV < 0.0) {
-          intake.setVoltage(filteredIntakeV);
+        if (tickJamSupervisor) {
+          double filteredIntakeV =
+              faultSupervisor.filterMechanismCommandVoltage(
+                  FaultSupervisor.JAM_CHANNEL_INTAKE,
+                  8.0,
+                  intake.getStatorCurrentAmps(),
+                  intake.getVelocity());
+          intakeUnjamming =
+              faultSupervisor.isChannelUnjamming(FaultSupervisor.JAM_CHANNEL_INTAKE)
+                  || filteredIntakeV < 0.0;
+          intakeUnjamVolts = filteredIntakeV;
+
+          double filteredIndexerV =
+              faultSupervisor.filterMechanismCommandVoltage(
+                  FaultSupervisor.JAM_CHANNEL_INDEXER,
+                  8.0,
+                  indexer.getStatorCurrentAmps(),
+                  indexer.getVelocity());
+          indexerUnjamming =
+              faultSupervisor.isChannelUnjamming(FaultSupervisor.JAM_CHANNEL_INDEXER)
+                  || filteredIndexerV < 0.0;
+          indexerUnjamVolts = filteredIndexerV;
+        }
+        if (intakeUnjamming) {
+          intake.setVoltage(intakeUnjamVolts);
         } else {
           intake.setVelocity(intakeInRps.get());
         }
-        double filteredIndexerV =
-            faultSupervisor.filterMechanismCommandVoltage(
-                FaultSupervisor.JAM_CHANNEL_INDEXER,
-                8.0,
-                indexer.getStatorCurrentAmps(),
-                indexer.getVelocity());
-        if (faultSupervisor.isChannelUnjamming(FaultSupervisor.JAM_CHANNEL_INDEXER)
-            || filteredIndexerV < 0.0) {
-          indexer.setVoltage(filteredIndexerV);
+        if (indexerUnjamming) {
+          indexer.setVoltage(indexerUnjamVolts);
         } else {
           indexer.setVelocity(indexerRps.get());
         }
@@ -202,6 +244,7 @@ public class Superstructure extends SubsystemBase {
         hood.setPosition(0.0);
       }
       case OUTTAKING -> {
+        clearAllJamChannels();
         tilter.setPosition(tilterDeployRot.get());
         intake.setVelocity(DEFAULT_INTAKE_OUT_RPS);
         indexer.setVelocity(-indexerRps.get());
@@ -209,41 +252,52 @@ public class Superstructure extends SubsystemBase {
         shooter.stop();
       }
       case PREPPING_SHOT -> {
+        clearAllJamChannels();
         intake.stop();
+        tilter.setPosition(tilterStowRot.get());
         indexer.stop();
         feeder.stop();
         shooter.setVelocity(targetShooterRps);
         hood.setPosition(targetHoodRot);
       }
       case SHOOTING -> {
+        clearJamChannel(FaultSupervisor.JAM_CHANNEL_INTAKE);
+        intake.stop();
+        tilter.setPosition(tilterStowRot.get());
         shooter.setVelocity(targetShooterRps);
         hood.setPosition(targetHoodRot);
         // Safety interlock: only feed once shooter, hood, chassis aim heading, and range are ready
         if (isReadyToFire()) {
-          double filteredIndexerV =
-              faultSupervisor.filterMechanismCommandVoltage(
-                  FaultSupervisor.JAM_CHANNEL_INDEXER,
-                  8.0,
-                  indexer.getStatorCurrentAmps(),
-                  indexer.getVelocity());
-          double desiredFeederSignV = Math.copySign(8.0, feederRps.get());
-          double filteredFeederV =
-              faultSupervisor.filterMechanismCommandVoltage(
-                  FaultSupervisor.JAM_CHANNEL_FEEDER,
-                  desiredFeederSignV,
-                  feeder.getStatorCurrentAmps(),
-                  feeder.getVelocity());
-          boolean indexerUnjamming =
-              faultSupervisor.isChannelUnjamming(FaultSupervisor.JAM_CHANNEL_INDEXER)
-                  || filteredIndexerV < 0.0;
-          boolean feederUnjamming =
-              faultSupervisor.isChannelUnjamming(FaultSupervisor.JAM_CHANNEL_FEEDER)
-                  || Math.signum(filteredFeederV) != Math.signum(desiredFeederSignV);
+          if (tickJamSupervisor) {
+            double filteredIndexerV =
+                faultSupervisor.filterMechanismCommandVoltage(
+                    FaultSupervisor.JAM_CHANNEL_INDEXER,
+                    8.0,
+                    indexer.getStatorCurrentAmps(),
+                    indexer.getVelocity());
+            indexerUnjamming =
+                faultSupervisor.isChannelUnjamming(FaultSupervisor.JAM_CHANNEL_INDEXER)
+                    || filteredIndexerV < 0.0;
+            indexerUnjamVolts = filteredIndexerV;
+            if (!indexerUnjamming) {
+              double desiredFeederSignV = Math.copySign(8.0, feederRps.get());
+              double filteredFeederV =
+                  faultSupervisor.filterMechanismCommandVoltage(
+                      FaultSupervisor.JAM_CHANNEL_FEEDER,
+                      desiredFeederSignV,
+                      feeder.getStatorCurrentAmps(),
+                      feeder.getVelocity());
+              feederUnjamming =
+                  faultSupervisor.isChannelUnjamming(FaultSupervisor.JAM_CHANNEL_FEEDER)
+                      || Math.signum(filteredFeederV) != Math.signum(desiredFeederSignV);
+              feederUnjamVolts = filteredFeederV;
+            }
+          }
           if (indexerUnjamming) {
-            indexer.setVoltage(filteredIndexerV);
+            indexer.setVoltage(indexerUnjamVolts);
             feeder.stop();
           } else if (feederUnjamming) {
-            feeder.setVoltage(filteredFeederV);
+            feeder.setVoltage(feederUnjamVolts);
             indexer.stop();
           } else {
             indexer.setVelocity(indexerRps.get());
@@ -254,12 +308,15 @@ public class Superstructure extends SubsystemBase {
             }
           }
         } else {
+          clearJamChannel(FaultSupervisor.JAM_CHANNEL_INDEXER);
+          clearJamChannel(FaultSupervisor.JAM_CHANNEL_FEEDER);
           shotDischargedInCurrentBurst = false;
           indexer.stop();
           feeder.stop();
         }
       }
       case CLIMBING -> {
+        clearAllJamChannels();
         intake.stop();
         indexer.stop();
         feeder.stop();
@@ -285,16 +342,19 @@ public class Superstructure extends SubsystemBase {
 
   @Override
   public void periodic() {
+    pendingTunableRefresh = false;
     LoggedTunableNumber.ifChanged(
         hashCode(),
-        this::applyStateSetpoints,
+        () -> pendingTunableRefresh = true,
         intakeInRps,
         indexerRps,
         feederRps,
         tilterDeployRot,
         tilterStowRot);
     if (state == State.SHOOTING || state == State.INTAKING) {
-      applyStateSetpoints();
+      applyStateSetpoints(true);
+    } else if (pendingTunableRefresh) {
+      applyStateSetpoints(false);
     }
 
     double tilterPitchRad =

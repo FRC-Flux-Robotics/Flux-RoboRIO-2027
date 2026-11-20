@@ -68,7 +68,7 @@ public class HardStopHomingCmd extends Command {
   @Override
   public void execute() {
     totalLoops++;
-    mechanism.setVoltage(homingVolts);
+    mechanism.setHomingVoltage(homingVolts);
 
     boolean stalled =
         mechanism.getStatorCurrentAmps() >= stallCurrentThresholdAmps

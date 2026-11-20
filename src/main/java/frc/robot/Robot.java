@@ -127,6 +127,10 @@ public class Robot extends LoggedRobot {
       Logger.recordOutput("Robot/MainThreadPriority", Threads.getCurrentThreadPriority());
     }
 
+    if (!Logger.hasReplaySource()) {
+      robotContainer.warmupBeforeCompetitionLoop();
+    }
+
     refreshRunMetaJson();
     writeRobotStateHeartbeat(true);
   }
@@ -206,6 +210,7 @@ public class Robot extends LoggedRobot {
   public void disabledInit() {
     writeRobotStateHeartbeat(true);
     if (robotContainer != null) {
+      robotContainer.resetSuperstructureToIdle();
       robotContainer.disabledPeriodic();
       refreshRunMetaJson();
     }
@@ -233,13 +238,22 @@ public class Robot extends LoggedRobot {
   }
 
   @Override
+  public void autonomousPeriodic() {}
+
+  @Override
   public void teleopInit() {
     writeRobotStateHeartbeat(true);
     if (autonomousCommand != null) {
       autonomousCommand.cancel();
       autonomousCommand = null;
     }
+    if (robotContainer != null) {
+      robotContainer.resetSuperstructureToIdle();
+    }
   }
+
+  @Override
+  public void teleopPeriodic() {}
 
   @Override
   public void testInit() {
@@ -248,8 +262,17 @@ public class Robot extends LoggedRobot {
       autonomousCommand.cancel();
       autonomousCommand = null;
     }
+    if (robotContainer != null) {
+      robotContainer.resetSuperstructureToIdle();
+    }
     writeRobotStateHeartbeat(true);
   }
+
+  @Override
+  public void testPeriodic() {}
+
+  @Override
+  public void simulationPeriodic() {}
 
   @Override
   public void close() {

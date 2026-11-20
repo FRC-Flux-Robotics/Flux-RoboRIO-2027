@@ -8,15 +8,19 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Fleet robot identities for FRC Team 10413 (FLUX Robotics), resolving via NI roboRIO / SystemCore
- * hardware hex serial map, HAL serial/comments, Linux device-tree serial, roboRIO/SystemCore
- * persistent identity tag files, and deploy tag before falling back loudly to {@link #COMP_2027}.
+ * hardware hex serial map, persistent identity tag files ({@code /home/lvuser/robot-identity.txt}
+ * and {@code /home/systemcore/robot-identity.txt}), deploy tag, Linux device-tree serial, and
+ * legacy HAL serial/comments before falling back loudly to the roboRIO-safe {@link #FUEL} profile.
  */
 public enum RobotIdentity {
   COMP_2027,
@@ -32,6 +36,7 @@ public enum RobotIdentity {
   public static final Path DEFAULT_SYSTEMCORE_PERSISTENT_TAG =
       Paths.get("/home/systemcore/robot-identity.txt");
   private static final String DEPLOY_TAG_FILENAME = "robot-identity.txt";
+  private static final Pattern TOKEN_SPLIT_PATTERN = Pattern.compile("[^A-Z0-9_]+");
 
   /**
    * Known physical controller hex serial numbers mapped to {@link RobotIdentity} (normalized
@@ -66,14 +71,14 @@ public enum RobotIdentity {
     }
     String combined =
         ((serial == null ? "" : serial) + " " + (comments == null ? "" : comments)).trim();
-    return parseExplicitToken(combined).orElse(COMP_2027);
+    return parseExplicitToken(combined).orElse(FUEL);
   }
 
   /**
-   * Resolves the active {@link RobotIdentity} across hardware hex serial map, HAL serial/comments,
-   * Linux device-tree serial, {@code /home/lvuser/robot-identity.txt}, {@code
-   * /home/systemcore/robot-identity.txt}, and deploy tag before falling back loudly to {@link
-   * #COMP_2027}.
+   * Resolves the active {@link RobotIdentity} across hardware hex serial map, {@code
+   * /home/lvuser/robot-identity.txt}, {@code /home/systemcore/robot-identity.txt}, deploy tag,
+   * Linux device-tree serial, and legacy HAL serial/comments before falling back loudly to {@link
+   * #FUEL}.
    */
   public static RobotIdentity detect() {
     String halSerial = RobotController.getSerialNumber();
@@ -121,26 +126,6 @@ public enum RobotIdentity {
       return fromHalSerialMap.get();
     }
 
-    String combined =
-        ((halSerial == null ? "" : halSerial) + " " + (comments == null ? "" : comments)).trim();
-    Optional<RobotIdentity> fromHal = parseExplicitToken(combined);
-    if (fromHal.isPresent()) {
-      recordMatch("HAL_SERIAL_OR_COMMENTS");
-      return fromHal.get();
-    }
-
-    String devTreeRaw = readCleanText(devicetreeSerialPath);
-    Optional<RobotIdentity> fromDevTreeMap = resolveFromSerialMap(devTreeRaw, serialMap);
-    if (fromDevTreeMap.isPresent()) {
-      recordMatch("DEVICETREE_SERIAL_MAP");
-      return fromDevTreeMap.get();
-    }
-    Optional<RobotIdentity> fromDevTree = parseExplicitToken(devTreeRaw);
-    if (fromDevTree.isPresent()) {
-      recordMatch("DEVICETREE_SERIAL");
-      return fromDevTree.get();
-    }
-
     Optional<RobotIdentity> fromRioTag =
         parseExplicitToken(readCleanText(roborioPersistentTagPath));
     if (fromRioTag.isPresent()) {
@@ -161,17 +146,38 @@ public enum RobotIdentity {
       return fromDeployTag.get();
     }
 
-    lastResolutionSource = "DEFAULT_COMP_2027";
+    String devTreeRaw = readCleanText(devicetreeSerialPath);
+    Optional<RobotIdentity> fromDevTreeMap = resolveFromSerialMap(devTreeRaw, serialMap);
+    if (fromDevTreeMap.isPresent()) {
+      recordMatch("DEVICETREE_SERIAL_MAP");
+      return fromDevTreeMap.get();
+    }
+    Optional<RobotIdentity> fromDevTree = parseExplicitToken(devTreeRaw);
+    if (fromDevTree.isPresent()) {
+      recordMatch("DEVICETREE_SERIAL");
+      return fromDevTree.get();
+    }
+
+    String combined =
+        ((halSerial == null ? "" : halSerial) + " " + (comments == null ? "" : comments)).trim();
+    Optional<RobotIdentity> fromHal = parseExplicitToken(combined);
+    if (fromHal.isPresent()) {
+      recordMatch("HAL_SERIAL_OR_COMMENTS");
+      return fromHal.get();
+    }
+
+    lastResolutionSource = "DEFAULT_FUEL";
     lastResolutionUsedFallback = true;
     String normalizedHal = normalizeSerial(halSerial);
     String serialDisplay = normalizedHal.isEmpty() ? "<blank>" : normalizedHal;
     lastWarningMessage =
         "RobotIdentity: unrecognized controller serial '"
             + serialDisplay
-            + "' and no identity tag found; falling back to COMP_2027. Write 'FUEL' or 'CORAL' to"
-            + " /home/lvuser/robot-identity.txt (or add serial to HARDWARE_SERIAL_MAP).";
-    DriverStation.reportWarning(lastWarningMessage, false);
-    return COMP_2027;
+            + "' and no valid identity tag found; falling back to roboRIO-safe FUEL profile. Write"
+            + " 'FUEL' or 'CORAL' to /home/lvuser/robot-identity.txt (or add serial to"
+            + " HARDWARE_SERIAL_MAP).";
+    DriverStation.reportError(lastWarningMessage, false);
+    return FUEL;
   }
 
   private static void recordMatch(String source) {
@@ -224,27 +230,42 @@ public enum RobotIdentity {
     return cleaned;
   }
 
+  /**
+   * Matches an exact or word-bounded robot identity token; rejects substring noise and ambiguous
+   * multi-identity strings so legacy comments cannot shadow explicit identity files.
+   */
   static Optional<RobotIdentity> parseExplicitToken(String raw) {
     if (raw == null || raw.isBlank()) {
       return Optional.empty();
     }
     String upper = raw.replace("\0", "").trim().toUpperCase(Locale.ROOT);
-    if (upper.contains("CORAL")) {
-      return Optional.of(CORAL);
+    Optional<RobotIdentity> exact = matchSingleToken(upper);
+    if (exact.isPresent()) {
+      return exact;
     }
-    if (upper.contains("FUEL")) {
-      return Optional.of(FUEL);
+
+    Set<RobotIdentity> matches = EnumSet.noneOf(RobotIdentity.class);
+    for (String token : TOKEN_SPLIT_PATTERN.split(upper)) {
+      if (token.isEmpty()) {
+        continue;
+      }
+      matchSingleToken(token).ifPresent(matches::add);
     }
-    if (upper.contains("CHASSIS")) {
-      return Optional.of(CHASSIS_3);
-    }
-    if (upper.contains("PRACTICE")) {
-      return Optional.of(PRACTICE_2027);
-    }
-    if (upper.contains("COMP_2027") || upper.equals("COMP")) {
-      return Optional.of(COMP_2027);
+    if (matches.size() == 1) {
+      return Optional.of(matches.iterator().next());
     }
     return Optional.empty();
+  }
+
+  private static Optional<RobotIdentity> matchSingleToken(String token) {
+    return switch (token) {
+      case "FUEL" -> Optional.of(FUEL);
+      case "CORAL" -> Optional.of(CORAL);
+      case "CHASSIS_3" -> Optional.of(CHASSIS_3);
+      case "PRACTICE_2027", "PRACTICE" -> Optional.of(PRACTICE_2027);
+      case "COMP_2027", "COMP" -> Optional.of(COMP_2027);
+      default -> Optional.empty();
+    };
   }
 
   private static String readHalCommentsSafe() {
