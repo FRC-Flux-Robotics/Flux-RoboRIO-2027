@@ -11,11 +11,11 @@ RoboRIO 2.0 + CTRE CANivore robot repository for **FRC Team 10413 (FLUX Robotics
 ---
 
 ## Live Cloud Build Artifacts (`gs://infra-2008/frc-10413/`)
-* **Latest Interactive Precision Scorecard:** [`precision-scorecard.html`](https://storage.cloud.google.com/infra-2008/frc-10413/builds-roborio/latest/precision-scorecard.html)
-* **Latest Student Default Autonomous (`STUDENT` Starter):** [`student-auto.mp4`](https://storage.cloud.google.com/infra-2008/frc-10413/builds-roborio/latest/student-auto.mp4) | [`student-auto.html` (Interactive 3D Viewer)](https://storage.cloud.google.com/infra-2008/frc-10413/builds-roborio/latest/student-auto.html)
-* **Latest `"Hub to Depot"` Reference Showcase (`FUEL`):** [`hub-to-depot-auto.mp4`](https://storage.cloud.google.com/infra-2008/frc-10413/builds-roborio/latest/hub-to-depot-auto.mp4) | [`hub-to-depot-auto.html` (Interactive 3D Viewer)](https://storage.cloud.google.com/infra-2008/frc-10413/builds-roborio/latest/hub-to-depot-auto.html)
-* **Interactive Class & Dependency Explorer:** [`docs/class-map.html`](docs/class-map.html) *(also published to [`class-map.html` on GCS](https://storage.cloud.google.com/infra-2008/frc-10413/builds-roborio/latest/class-map.html) and [`frc-flux-robotics.github.io/class-map-roborio-2027.html`](https://frc-flux-robotics.github.io/class-map-roborio-2027.html))*
-* **Latest Offline Robot Package (`.fluxpkg.zip`):** [`STABLE_v2027.1.0_roborio-2026_fluxpkg.zip`](https://storage.cloud.google.com/infra-2008/frc-10413/builds-roborio/latest/STABLE_v2027.1.0_roborio-2026_fluxpkg.zip)
+* **Latest Interactive Precision Scorecard:** [`precision-scorecard.html`](https://storage.googleapis.com/infra-2008/frc-10413/builds-roborio/latest/precision-scorecard.html)
+* **Latest Student Default Autonomous (`STUDENT` Starter):** [`student-auto.mp4`](https://storage.googleapis.com/infra-2008/frc-10413/builds-roborio/latest/student-auto.mp4) | [`student-auto.html` (Interactive 3D Viewer)](https://storage.googleapis.com/infra-2008/frc-10413/builds-roborio/latest/student-auto.html)
+* **Latest `"Hub to Depot"` Reference Showcase (`FUEL`):** [`hub-to-depot-auto.mp4`](https://storage.googleapis.com/infra-2008/frc-10413/builds-roborio/latest/hub-to-depot-auto.mp4) | [`hub-to-depot-auto.html` (Interactive 3D Viewer)](https://storage.googleapis.com/infra-2008/frc-10413/builds-roborio/latest/hub-to-depot-auto.html)
+* **Interactive Class & Dependency Explorer:** [`docs/class-map.html`](docs/class-map.html) *(also published to [`class-map.html` on GCS](https://storage.googleapis.com/infra-2008/frc-10413/builds-roborio/latest/class-map.html) and [`frc-flux-robotics.github.io/class-map-roborio-2027.html`](https://frc-flux-robotics.github.io/class-map-roborio-2027.html))*
+* **Latest Offline Robot Package (`.fluxpkg.zip`):** [`STABLE_v2027.1.0_roborio-2026_fluxpkg.zip`](https://storage.googleapis.com/infra-2008/frc-10413/builds-roborio/latest/STABLE_v2027.1.0_roborio-2026_fluxpkg.zip)
 * **Student Developer Guide:** [`STUDENTS.md`](STUDENTS.md) | [`STUDENT-CHANGELOG.md`](STUDENT-CHANGELOG.md)
 
 ---
