@@ -72,7 +72,11 @@ public class LoggedTunableNumber implements DoubleSupplier {
   public boolean hasChanged(int id) {
     double currentValue = get();
     Double lastValue = lastHasChangedValues.get(id);
-    if (lastValue == null || Double.compare(currentValue, lastValue) != 0) {
+    if (lastValue == null) {
+      lastHasChangedValues.put(id, currentValue);
+      return Double.compare(currentValue, defaultValue) != 0;
+    }
+    if (Double.compare(currentValue, lastValue) != 0) {
       lastHasChangedValues.put(id, currentValue);
       return true;
     }

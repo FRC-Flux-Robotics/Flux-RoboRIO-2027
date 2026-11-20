@@ -29,6 +29,7 @@ public final class PhoenixOdometryThread {
   private final List<BaseStatusSignal> allSignals = new ArrayList<>();
   private final List<DoubleSupplier> signalSuppliers = new ArrayList<>();
   private final List<Queue<Double>> signalQueues = new ArrayList<>();
+  private final List<Queue<Double>> timestampQueues = new ArrayList<>();
   private final Queue<Double> timestampQueue = new ArrayBlockingQueue<>(32);
   private BaseStatusSignal[] cachedSignals = new BaseStatusSignal[0];
   private final Thread thread;
@@ -108,6 +109,21 @@ public final class PhoenixOdometryThread {
     return queue;
   }
 
+  /**
+   * Creates a dedicated 250 Hz timestamp queue synchronized with every {@link #sampleOnce(double)}
+   * tick so each {@link ModuleIOTalonFX} and {@link GyroIOPigeon2} logs replayable timestamps.
+   */
+  public Queue<Double> makeTimestampQueue() {
+    Queue<Double> queue = new ArrayBlockingQueue<>(32);
+    ODOMETRY_LOCK.lock();
+    try {
+      timestampQueues.add(queue);
+    } finally {
+      ODOMETRY_LOCK.unlock();
+    }
+    return queue;
+  }
+
   public void sampleOnce(double timestampSeconds) {
     ODOMETRY_LOCK.lock();
     try {
@@ -117,6 +133,13 @@ public final class PhoenixOdometryThread {
       if (!timestampQueue.offer(timestampSeconds)) {
         timestampQueue.poll();
         timestampQueue.offer(timestampSeconds);
+      }
+      for (int i = 0; i < timestampQueues.size(); i++) {
+        Queue<Double> tq = timestampQueues.get(i);
+        if (!tq.offer(timestampSeconds)) {
+          tq.poll();
+          tq.offer(timestampSeconds);
+        }
       }
       for (int i = 0; i < signalSuppliers.size(); i++) {
         double val = signalSuppliers.get(i).getAsDouble();
@@ -179,6 +202,7 @@ public final class PhoenixOdometryThread {
       allSignals.clear();
       signalSuppliers.clear();
       signalQueues.clear();
+      timestampQueues.clear();
       timestampQueue.clear();
       cachedSignals = new BaseStatusSignal[0];
     } finally {

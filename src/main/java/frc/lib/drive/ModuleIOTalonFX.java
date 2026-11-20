@@ -64,6 +64,7 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
   private final int driveSignalGroup;
   private final int turnSignalGroup;
   private final boolean usingFusedCancoder;
+  private final Queue<Double> timestampQueue;
   private final Queue<Double> drivePositionQueue;
   private final Queue<Double> turnPositionQueue;
 
@@ -224,6 +225,7 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
             turnSupplyCurrent);
 
     PhoenixOdometryThread odomThread = PhoenixOdometryThread.getInstance();
+    timestampQueue = odomThread.makeTimestampQueue();
     drivePositionQueue =
         odomThread.registerLatencyCompensatedSignal(drivePosition, driveVelocity);
     turnPositionQueue =
@@ -331,6 +333,13 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
 
     PhoenixOdometryThread.ODOMETRY_LOCK.lock();
     try {
+      int nTimestamps = timestampQueue.size();
+      inputs.odometryTimestamps = new double[nTimestamps];
+      for (int i = 0; i < nTimestamps; i++) {
+        Double ts = timestampQueue.poll();
+        inputs.odometryTimestamps[i] = (ts != null) ? ts : 0.0;
+      }
+
       int nDrive = drivePositionQueue.size();
       inputs.odometryDrivePositionsRad = new double[nDrive];
       for (int i = 0; i < nDrive; i++) {

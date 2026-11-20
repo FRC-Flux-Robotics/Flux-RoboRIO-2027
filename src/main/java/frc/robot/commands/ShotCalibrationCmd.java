@@ -1,5 +1,6 @@
 package frc.robot.commands;
 
+import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.wpilibj2.command.Command;
@@ -23,7 +24,7 @@ import org.littletonrobotics.junction.Logger;
  * range_table.csv}.
  */
 public class ShotCalibrationCmd extends Command {
-  public static final double[] CALIBRATION_DISTANCES_METERS = {1.50, 2.50, 3.50, 4.50, 5.50};
+  public static final double[] CALIBRATION_DISTANCES_METERS = {1.22, 1.93, 2.84, 3.76, 4.67};
   public static final int LOOPS_PER_DISTANCE_STEP = 12;
 
   private final Drive drive;
@@ -71,7 +72,12 @@ public class ShotCalibrationCmd extends Command {
             drive.getPose(),
             fieldSpeeds,
             drive.getPose().getTranslation().plus(new Translation2d(testDist, 0.0)));
-    superstructure.applyShotSolution(sol, true);
+    double headingErrRad =
+        Math.abs(
+            MathUtil.angleModulus(
+                sol.driveAimHeading().minus(drive.getPose().getRotation()).getRadians()));
+    superstructure.applyShotSolution(
+        sol, true, headingErrRad, shotCalculator.isInRange(sol.effectiveDistanceMeters()));
 
     if (loopCount % LOOPS_PER_DISTANCE_STEP == 0) {
       String row =

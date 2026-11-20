@@ -27,6 +27,7 @@ public class GyroIOPigeon2 implements GyroIO, AutoCloseable {
   private final StatusSignal<Angle> pitch;
   private final StatusSignal<Voltage> supplyVoltage;
   private final int signalGroup;
+  private final Queue<Double> yawTimestampQueue;
   private final Queue<Double> yawPositionQueue;
 
   private boolean hasOnboardImuFallback = false;
@@ -52,8 +53,9 @@ public class GyroIOPigeon2 implements GyroIO, AutoCloseable {
 
     signalGroup =
         PhoenixSignals.register(canBusName, yaw, yawVelocity, roll, pitch, supplyVoltage);
-    yawPositionQueue =
-        PhoenixOdometryThread.getInstance().registerLatencyCompensatedSignal(yaw, yawVelocity);
+    PhoenixOdometryThread odomThread = PhoenixOdometryThread.getInstance();
+    yawTimestampQueue = odomThread.makeTimestampQueue();
+    yawPositionQueue = odomThread.registerLatencyCompensatedSignal(yaw, yawVelocity);
     PhoenixUtil.tryUntilOk(
         "Gyro-Pigeon2-" + pigeonId + "-OptimizeBus",
         () -> ParentDevice.optimizeBusUtilizationForAll(pigeon),
@@ -97,6 +99,13 @@ public class GyroIOPigeon2 implements GyroIO, AutoCloseable {
 
     PhoenixOdometryThread.ODOMETRY_LOCK.lock();
     try {
+      int nTs = yawTimestampQueue.size();
+      inputs.odometryYawTimestamps = new double[nTs];
+      for (int i = 0; i < nTs; i++) {
+        Double ts = yawTimestampQueue.poll();
+        inputs.odometryYawTimestamps[i] = (ts != null) ? ts : 0.0;
+      }
+
       int n = yawPositionQueue.size();
       inputs.odometryYawPositions = new Rotation2d[n];
       for (int i = 0; i < n; i++) {

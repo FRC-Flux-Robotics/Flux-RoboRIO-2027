@@ -36,14 +36,15 @@ public class Superstructure extends SubsystemBase {
   public static final double DEFAULT_TILTER_DEPLOY_ROT = -17.0;
   public static final double DEFAULT_TILTER_CLIMB_ROT = -6.0;
   public static final double DEFAULT_SHOOTER_IDLE_RPS = 0.0;
-  public static final double DEFAULT_SHORT_SHOOTER_RPS = 52.0;
-  public static final double DEFAULT_SHORT_HOOD_ROT = 1.80;
-  public static final double DEFAULT_MID_SHOOTER_RPS = 69.0;
-  public static final double DEFAULT_MID_HOOD_ROT = 5.10;
-  public static final double DEFAULT_LONG_SHOOTER_RPS = 88.0;
-  public static final double DEFAULT_LONG_HOOD_ROT = 8.40;
+  public static final double DEFAULT_SHORT_SHOOTER_RPS = 33.33;
+  public static final double DEFAULT_SHORT_HOOD_ROT = 2.80;
+  public static final double DEFAULT_MID_SHOOTER_RPS = 36.67;
+  public static final double DEFAULT_MID_HOOD_ROT = 3.90;
+  public static final double DEFAULT_LONG_SHOOTER_RPS = 40.0;
+  public static final double DEFAULT_LONG_HOOD_ROT = 8.85;
   public static final double SHOOTER_TOLERANCE_RPS = 2.0;
   public static final double HOOD_TOLERANCE_ROT = 0.15;
+  public static final double AIM_HEADING_TOLERANCE_RAD = Math.toRadians(5.0);
   public static final double TILTER_MAX_PITCH_DEG = 65.0;
   public static final double HOOD_MAX_ROT = 12.5;
   public static final double HOOD_MAX_PITCH_DEG = 38.0;
@@ -67,9 +68,13 @@ public class Superstructure extends SubsystemBase {
   private final LoggedTunableNumber tilterStowRot =
       new LoggedTunableNumber("Superstructure/TilterStowRot", DEFAULT_TILTER_STOW_ROT);
 
+  private final Pose3d[] mechPoses = new Pose3d[2];
+
   private State state = State.IDLE;
   private double targetShooterRps = 0.0;
   private double targetHoodRot = 0.0;
+  private double aimHeadingErrorRad = 0.0;
+  private boolean shotInRange = true;
   private int virtualGamePieceCount = 1;
   private boolean shotDischargedInCurrentBurst = false;
 
@@ -102,9 +107,27 @@ public class Superstructure extends SubsystemBase {
     applyStateSetpoints();
   }
 
+  /** Updates the latest chassis heading error and ballistic range gate for {@link #isReadyToFire()}. */
+  public void updateShotAimStatus(double headingErrorRad, boolean inRange) {
+    aimHeadingErrorRad = Math.abs(headingErrorRad);
+    shotInRange = inRange;
+  }
+
+  /**
+   * Fail-closed overload: without an explicit chassis aim error and range check, {@link
+   * #isReadyToFire()} remains blocked until {@link #applyShotSolution(ShotSolution, boolean,
+   * double, boolean)} or {@link #updateShotAimStatus(double, boolean)} confirms alignment.
+   */
   public void applyShotSolution(ShotSolution solution, boolean fireWhenReady) {
+    applyShotSolution(solution, fireWhenReady, Double.POSITIVE_INFINITY, false);
+  }
+
+  public void applyShotSolution(
+      ShotSolution solution, boolean fireWhenReady, double headingErrorRad, boolean inRange) {
     targetShooterRps = solution.shooterRps();
     targetHoodRot = solution.hoodRotations();
+    aimHeadingErrorRad = Math.abs(headingErrorRad);
+    shotInRange = inRange;
     State nextState = fireWhenReady ? State.SHOOTING : State.PREPPING_SHOT;
     if (nextState != State.SHOOTING) {
       shotDischargedInCurrentBurst = false;
@@ -122,8 +145,15 @@ public class Superstructure extends SubsystemBase {
   }
 
   public void shoot(double shooterRps, double hoodRotations) {
+    shoot(shooterRps, hoodRotations, 0.0, true);
+  }
+
+  public void shoot(
+      double shooterRps, double hoodRotations, double headingErrorRad, boolean inRange) {
     targetShooterRps = shooterRps;
     targetHoodRot = hoodRotations;
+    aimHeadingErrorRad = Math.abs(headingErrorRad);
+    shotInRange = inRange;
     if (state != State.SHOOTING) {
       shotDischargedInCurrentBurst = false;
     }
@@ -143,8 +173,30 @@ public class Superstructure extends SubsystemBase {
       }
       case INTAKING -> {
         tilter.setPosition(tilterDeployRot.get());
-        intake.setVelocity(intakeInRps.get());
-        indexer.setVelocity(indexerRps.get());
+        double filteredIntakeV =
+            faultSupervisor.filterMechanismCommandVoltage(
+                FaultSupervisor.JAM_CHANNEL_INTAKE,
+                8.0,
+                intake.getStatorCurrentAmps(),
+                intake.getVelocity());
+        if (faultSupervisor.isChannelUnjamming(FaultSupervisor.JAM_CHANNEL_INTAKE)
+            || filteredIntakeV < 0.0) {
+          intake.setVoltage(filteredIntakeV);
+        } else {
+          intake.setVelocity(intakeInRps.get());
+        }
+        double filteredIndexerV =
+            faultSupervisor.filterMechanismCommandVoltage(
+                FaultSupervisor.JAM_CHANNEL_INDEXER,
+                8.0,
+                indexer.getStatorCurrentAmps(),
+                indexer.getVelocity());
+        if (faultSupervisor.isChannelUnjamming(FaultSupervisor.JAM_CHANNEL_INDEXER)
+            || filteredIndexerV < 0.0) {
+          indexer.setVoltage(filteredIndexerV);
+        } else {
+          indexer.setVelocity(indexerRps.get());
+        }
         feeder.stop();
         shooter.stop();
         hood.setPosition(0.0);
@@ -166,14 +218,33 @@ public class Superstructure extends SubsystemBase {
       case SHOOTING -> {
         shooter.setVelocity(targetShooterRps);
         hood.setPosition(targetHoodRot);
-        // Safety interlock: only feed game piece once shooter & hood are within tolerance
+        // Safety interlock: only feed once shooter, hood, chassis aim heading, and range are ready
         if (isReadyToFire()) {
           double filteredIndexerV =
               faultSupervisor.filterMechanismCommandVoltage(
-                  8.0, indexer.getStatorCurrentAmps(), indexer.getVelocity());
-          if (filteredIndexerV < 0.0) {
+                  FaultSupervisor.JAM_CHANNEL_INDEXER,
+                  8.0,
+                  indexer.getStatorCurrentAmps(),
+                  indexer.getVelocity());
+          double desiredFeederSignV = Math.copySign(8.0, feederRps.get());
+          double filteredFeederV =
+              faultSupervisor.filterMechanismCommandVoltage(
+                  FaultSupervisor.JAM_CHANNEL_FEEDER,
+                  desiredFeederSignV,
+                  feeder.getStatorCurrentAmps(),
+                  feeder.getVelocity());
+          boolean indexerUnjamming =
+              faultSupervisor.isChannelUnjamming(FaultSupervisor.JAM_CHANNEL_INDEXER)
+                  || filteredIndexerV < 0.0;
+          boolean feederUnjamming =
+              faultSupervisor.isChannelUnjamming(FaultSupervisor.JAM_CHANNEL_FEEDER)
+                  || Math.signum(filteredFeederV) != Math.signum(desiredFeederSignV);
+          if (indexerUnjamming) {
             indexer.setVoltage(filteredIndexerV);
             feeder.stop();
+          } else if (feederUnjamming) {
+            feeder.setVoltage(filteredFeederV);
+            indexer.stop();
           } else {
             indexer.setVelocity(indexerRps.get());
             feeder.setVelocity(feederRps.get());
@@ -200,11 +271,16 @@ public class Superstructure extends SubsystemBase {
   }
 
   /**
-   * Returns true when both the dual counter-rotating shooter and hood have reached their target
-   * setpoints (enforcing the shot-release interlock).
+   * Returns true when the dual shooter, hood, chassis aim heading error, and ballistic range are
+   * all within tolerance (enforcing the shot-release interlock).
    */
   public boolean isReadyToFire() {
-    return targetShooterRps > 10.0 && shooter.atTarget() && hood.atTarget();
+    return targetShooterRps > 10.0
+        && shooter.atTarget()
+        && hood.atTarget()
+        && shotInRange
+        && Double.isFinite(aimHeadingErrorRad)
+        && Math.abs(aimHeadingErrorRad) <= AIM_HEADING_TOLERANCE_RAD;
   }
 
   @Override
@@ -217,7 +293,7 @@ public class Superstructure extends SubsystemBase {
         feederRps,
         tilterDeployRot,
         tilterStowRot);
-    if (state == State.SHOOTING) {
+    if (state == State.SHOOTING || state == State.INTAKING) {
       applyStateSetpoints();
     }
 
@@ -226,14 +302,15 @@ public class Superstructure extends SubsystemBase {
             * Math.toRadians(TILTER_MAX_PITCH_DEG);
     double hoodPitchRad =
         (hood.getPosition() / HOOD_MAX_ROT) * Math.toRadians(HOOD_MAX_PITCH_DEG);
-    Pose3d[] mechPoses =
-        new Pose3d[] {
-          new Pose3d(0.32, 0.0, 0.18, new Rotation3d(0.0, tilterPitchRad, 0.0)),
-          new Pose3d(-0.12, 0.0, 0.46, new Rotation3d(0.0, -hoodPitchRad, 0.0))
-        };
+    mechPoses[0] = new Pose3d(0.32, 0.0, 0.18, new Rotation3d(0.0, tilterPitchRad, 0.0));
+    mechPoses[1] = new Pose3d(-0.12, 0.0, 0.46, new Rotation3d(0.0, -hoodPitchRad, 0.0));
 
     Logger.recordOutput("Superstructure/State", state.name());
     Logger.recordOutput("Superstructure/ReadyToFire", isReadyToFire());
+    Logger.recordOutput("Superstructure/ShotInRange", shotInRange);
+    Logger.recordOutput(
+        "Superstructure/AimHeadingErrorDeg",
+        Double.isFinite(aimHeadingErrorRad) ? Math.toDegrees(aimHeadingErrorRad) : 999.0);
     Logger.recordOutput("Superstructure/TargetShooterRPS", targetShooterRps);
     Logger.recordOutput("Superstructure/TargetHoodRot", targetHoodRot);
     Logger.recordOutput("Superstructure/VirtualGamePieces", virtualGamePieceCount);

@@ -77,6 +77,7 @@ test {
     systemProperty 'junit.jupiter.extensions.autodetection.enabled', 'true'
     filter {
         excludeTestsMatching "frc.simharness.StudentAutoRenderTest.*"
+        excludeTestsMatching "frc.simharness.DesktopWpilogTelemetryTest.*"
     }
     testLogging {
         events "passed", "skipped", "failed", "standardOut"
@@ -371,6 +372,27 @@ tasks.register('renderAuto', Test) {
     }
 }
 wpi.java.configureTestTasks(tasks.named('renderAuto').get())
+
+// Task: verifyWpilog — Executes a 30s desktop Robot simulation in an isolated JVM and verifies the flushed .wpilog channels
+tasks.register('verifyWpilog', Test) {
+    group = 'flux'
+    description = 'Runs a 30-second desktop Robot simulation and verifies ConfigSHA256, OdometryTimestamps, PowerDistribution, and motor channels in the resulting .wpilog.'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    systemProperty 'flux.wpilogDurationSec', (project.findProperty('durationSec') ?: '30')
+    filter {
+        includeTestsMatching "frc.simharness.DesktopWpilogTelemetryTest.*"
+    }
+    testLogging {
+        events "passed", "failed", "standardOut"
+        showStandardStreams = true
+        showExceptions = true
+        exceptionFormat = "short"
+    }
+    outputs.upToDateWhen { false }
+}
+wpi.java.configureTestTasks(tasks.named('verifyWpilog').get())
 
 // Task: checkExercises — Grades the 4-level StudentExercises.java kit in < 3 seconds
 tasks.register('checkExercises', Test) {

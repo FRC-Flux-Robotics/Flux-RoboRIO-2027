@@ -1,43 +1,71 @@
 package frc.robot;
 
 import com.ctre.phoenix6.SignalLogger;
+import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.Filesystem;
 import edu.wpi.first.wpilibj.RobotBase;
+import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.wpilibj.Threads;
+import edu.wpi.first.wpilibj.Timer;
+import edu.wpi.first.wpilibj.livewindow.LiveWindow;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import frc.lib.fluxfig.FluxFig;
 import frc.lib.util.LogFileManager;
 import frc.lib.util.LoggedTracer;
 import frc.lib.util.PhoenixSignals;
+import frc.lib.util.PhoenixUtil;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import org.littletonrobotics.junction.LoggedPowerDistribution;
 import org.littletonrobotics.junction.LoggedRobot;
 import org.littletonrobotics.junction.Logger;
 import org.littletonrobotics.junction.networktables.NT4Publisher;
 import org.littletonrobotics.junction.wpilog.WPILOGWriter;
 
 /**
- * LoggedRobot lifecycle supporting configurable 50 Hz (20 ms) and 200 Hz (5 ms) control loops via
- * FluxFig, batched CAN status signal refresh (skipped in AdvantageKit REPLAY), main-thread RT
- * priority {@code 1}, {@link CommandScheduler} execution, and per-section loop tracing.
+ * LoggedRobot lifecycle for {@code Flux-RoboRIO-2027} ({@code FUEL} / {@code CORAL}): 50 Hz
+ * control loop via FluxFig, {@code ConfigSHA256} metadata recorded before {@link Logger#start()},
+ * {@code 6.0 V} roboRIO brownout floor, {@link LoggedPowerDistribution} logging, atomic {@code
+ * /tmp/flux-robot-state} lockout heartbeat for {@code FluxTray}, batched CAN signal refresh,
+ * main-thread RT priority {@code 1}, and isolated {@link #testInit()}.
  */
 public class Robot extends LoggedRobot {
   /** Safe SCHED_FIFO priority (1 rather than 99) preventing Linux RT worker starvation (-1003). */
   public static final int MAIN_THREAD_RT_PRIORITY = 1;
 
+  /** Lowered roboRIO 2.0 brownout threshold (6.0 V vs. 6.8 V default) for CTRE swerve sag margin. */
+  public static final double ROBORIO_BROWNOUT_VOLTAGE_V = 6.0;
+
+  /** Atomic robot-side lockout state file checked by {@code FluxTray} SSH pre-flight guards. */
+  public static final Path DEFAULT_ROBOT_STATE_FILE = Path.of("/tmp/flux-robot-state");
+
+  private static final long ROBOT_STATE_HEARTBEAT_INTERVAL_MS = 1000L;
+
   private static boolean loggerStarted = false;
 
+  private final Path robotStateFile;
   private RobotIdentity identity;
   private RobotContainer robotContainer;
   private Command autonomousCommand;
   private String logDir;
   private String deployedGitSha = "unknown";
   private String bootTimestampIso = "";
+  private boolean lastHeartbeatEnabled = false;
+  private boolean lastHeartbeatFms = false;
+  private long lastHeartbeatEpochMs = 0L;
+  private Boolean lastJoystickWarningSilenced = null;
 
   public Robot() {
+    this(DEFAULT_ROBOT_STATE_FILE);
+  }
+
+  /** Deterministic constructor allowing an isolated state-file path in unit/sim tests. */
+  public Robot(Path robotStateFile) {
     super(resolveBootLoopPeriodSeconds());
+    this.robotStateFile = (robotStateFile != null) ? robotStateFile : DEFAULT_ROBOT_STATE_FILE;
   }
 
   private static double resolveBootLoopPeriodSeconds() {
@@ -54,18 +82,31 @@ public class Robot extends LoggedRobot {
 
   @Override
   public void robotInit() {
+    // Keep CTRE .hoot auto-logging OFF (WPILOG-only for M1 CT handoff to avoid flash/USB bloat).
     SignalLogger.enableAutoLogging(false);
+    RobotController.setBrownoutVoltage(ROBORIO_BROWNOUT_VOLTAGE_V);
+    LiveWindow.disableAllTelemetry();
+    updateJoystickWarningSilence();
+
     logDir = LogFileManager.getLogPath();
     bootTimestampIso = Instant.now().toString();
-    deployedGitSha = LogFileManager.readDeployedGitSha(Filesystem.getDeployDirectory().toPath());
+    Path deployDir = Filesystem.getDeployDirectory().toPath();
+    Path configDir = deployDir.resolve("configs");
+    deployedGitSha = LogFileManager.readDeployedGitSha(deployDir);
+    identity = RobotIdentity.detect();
+    FluxFig bootConfig = FluxFig.load(configDir, identity.name());
+
+    // Record all immutable boot metadata BEFORE Logger.start() so WPILOG headers capture it.
     Logger.recordMetadata("LogDirectory", logDir);
     Logger.recordMetadata("GitSHA", deployedGitSha);
-    identity = RobotIdentity.detect();
     Logger.recordMetadata("RobotIdentity", identity.name());
     Logger.recordMetadata("RobotIdentitySource", RobotIdentity.getLastResolutionSource());
+    Logger.recordMetadata("ConfigSHA256", bootConfig.getConfigSha256());
+    Logger.recordMetadata("FluxFigProfile", bootConfig.getActiveProfile());
+    Logger.recordMetadata("FluxFigVersion", bootConfig.getEffectiveVersion());
 
     if (!loggerStarted) {
-      if (RobotBase.isReal()) {
+      if (!Logger.hasReplaySource()) {
         Logger.addDataReceiver(new WPILOGWriter(logDir));
         Logger.addDataReceiver(new NT4Publisher());
       }
@@ -73,9 +114,13 @@ public class Robot extends LoggedRobot {
       loggerStarted = true;
     }
 
-    robotContainer = new RobotContainer(identity);
+    LoggedPowerDistribution.getInstance();
+
+    robotContainer = new RobotContainer(identity, configDir, bootConfig, !RobotBase.isReal());
     robotContainer.getDrive().setLoopPeriodSeconds(getPeriod());
-    Logger.recordMetadata("ConfigSHA256", robotContainer.getFluxFig().getConfigSha256());
+
+    Logger.recordOutput("Phoenix/CanConfigFailures", PhoenixUtil.getFailedConfigCallCount());
+    Logger.recordOutput("Phoenix/CanConfigSkipped", PhoenixUtil.getSkippedConfigCallCount());
 
     if (RobotBase.isReal()) {
       Threads.setCurrentThreadPriority(true, MAIN_THREAD_RT_PRIORITY);
@@ -83,6 +128,40 @@ public class Robot extends LoggedRobot {
     }
 
     refreshRunMetaJson();
+    writeRobotStateHeartbeat(true);
+  }
+
+  private void updateJoystickWarningSilence() {
+    boolean silence = !DriverStation.isFMSAttached();
+    if (lastJoystickWarningSilenced == null || lastJoystickWarningSilenced.booleanValue() != silence) {
+      DriverStation.silenceJoystickConnectionWarning(silence);
+      lastJoystickWarningSilenced = silence;
+    }
+  }
+
+  private void writeRobotStateHeartbeat(boolean force) {
+    boolean enabled = DriverStation.isEnabled();
+    boolean fms = DriverStation.isFMSAttached();
+    long nowMs = System.currentTimeMillis();
+    if (!force
+        && enabled == lastHeartbeatEnabled
+        && fms == lastHeartbeatFms
+        && (nowMs - lastHeartbeatEpochMs) < ROBOT_STATE_HEARTBEAT_INTERVAL_MS) {
+      return;
+    }
+    try {
+      LogFileManager.writeRobotStateFile(
+          robotStateFile,
+          enabled,
+          fms,
+          nowMs,
+          identity != null ? identity.name() : "UNKNOWN",
+          ProcessHandle.current().pid());
+      lastHeartbeatEnabled = enabled;
+      lastHeartbeatFms = fms;
+      lastHeartbeatEpochMs = nowMs;
+    } catch (IOException ignored) {
+    }
   }
 
   private void refreshRunMetaJson() {
@@ -94,7 +173,7 @@ public class Robot extends LoggedRobot {
           Path.of(logDir),
           identity.name(),
           robotContainer.getFluxFig().getActiveProfile(),
-          robotContainer.getFluxFig().getConfigSha256(),
+          robotContainer.getBootConfigSha256(),
           robotContainer.getBatteryIo().getResolvedBatteryName(),
           robotContainer.getFluxFig().getInt("loopPeriodMs"),
           deployedGitSha,
@@ -105,7 +184,10 @@ public class Robot extends LoggedRobot {
 
   @Override
   public void robotPeriodic() {
+    double loopStartSec = Timer.getFPGATimestamp();
     LoggedTracer.reset();
+    updateJoystickWarningSilence();
+    writeRobotStateHeartbeat(false);
     if (!Logger.hasReplaySource()) {
       PhoenixSignals.refreshAll();
     }
@@ -116,10 +198,13 @@ public class Robot extends LoggedRobot {
       robotContainer.periodicUpdate();
       LoggedTracer.trace("RobotContainer");
     }
+    Logger.recordOutput(
+        "Performance/TotalLoopMs", (Timer.getFPGATimestamp() - loopStartSec) * 1000.0);
   }
 
   @Override
   public void disabledInit() {
+    writeRobotStateHeartbeat(true);
     if (robotContainer != null) {
       robotContainer.disabledPeriodic();
       refreshRunMetaJson();
@@ -135,6 +220,7 @@ public class Robot extends LoggedRobot {
 
   @Override
   public void autonomousInit() {
+    writeRobotStateHeartbeat(true);
     if (autonomousCommand != null) {
       autonomousCommand.cancel();
     }
@@ -148,13 +234,41 @@ public class Robot extends LoggedRobot {
 
   @Override
   public void teleopInit() {
+    writeRobotStateHeartbeat(true);
     if (autonomousCommand != null) {
       autonomousCommand.cancel();
       autonomousCommand = null;
     }
   }
 
+  @Override
+  public void testInit() {
+    CommandScheduler.getInstance().cancelAll();
+    if (autonomousCommand != null) {
+      autonomousCommand.cancel();
+      autonomousCommand = null;
+    }
+    writeRobotStateHeartbeat(true);
+  }
+
+  @Override
+  public void close() {
+    try {
+      Files.deleteIfExists(robotStateFile);
+    } catch (IOException ignored) {
+    }
+    super.close();
+  }
+
   public RobotContainer getRobotContainer() {
     return robotContainer;
+  }
+
+  public Path getRobotStateFile() {
+    return robotStateFile;
+  }
+
+  public String getLogDir() {
+    return logDir;
   }
 }

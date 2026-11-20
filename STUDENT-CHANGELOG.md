@@ -1,5 +1,10 @@
 # FLUX 10413 — Student Changelog (`STUDENT-CHANGELOG.md`)
 
+## 2026-11-20 — `M1` Track A: RoboRIO Boot Safety, Replayable `.wpilog` Telemetry & Safe `FUEL`/`CORAL` Defaults (`M1.2`–`M1.4`)
+* **🔧 What Changed:** Hardened boot CAN initialization (`PhoenixUtil` guaranteed first attempt + loud errors, `RobotIdentity` `/home/lvuser/robot-identity.txt` + hex serial map + unconditional fallback warning, `loopPeriodMs = 20`, disabled config-reload restart honesty, `LogFileManager` `/U` mount/writability check, zero tick-1 `LoggedTunableNumber` CAN writes), wired replayable `OdometryTimestamps` / `OdometryYawTimestamps`, `ConfigSHA256` before `Logger.start()`, `6.0 V` brownout floor, `LoggedPowerDistribution`, `LiveWindow.disableAllTelemetry()`, `testInit()`, and atomic `/tmp/flux-robot-state` heartbeat in `Robot.java`, and restored proven NYTR `33.33–40.00 RPS` `FUEL` shooting tables, `(4.626, 4.035)` Hub center, heading/range-gated `isReadyToFire()`, per-channel `FaultSupervisor` unjamming, `Coast` neutral mode on `Shooter`, and `New_Robot` `CORAL` `BL`/`BR` CANcoder offsets (`+0.040771`, `-0.376953`).
+* **🎮 How It Affects Sim/Robot:** `FUEL` now spins flywheels at proven competition speeds with coast spin-down, refuses to feed balls when aimed >5° off the Hub or out of range, independently unjams stalled `Intake`/`Indexer`/`Feeder` rollers, keeps pit/homing triggers locked to non-FMS WPILib `Test` mode while holding X-Lock on `B`, and records complete replayable `.wpilog` files (verified in a 30 s desktop run via `./gradlew verifyWpilog`).
+* **🎯 What to Try Next:** Run `./gradlew verifyWpilog` to inspect a full 30 s `.wpilog`, run `./gradlew checkExercises` and `./gradlew renderAuto -Pauto="Hub to Depot"`, and verify `FUEL`/`CORAL` identities on `/home/lvuser/robot-identity.txt` during Tuesday's pre-flight (`M1.11`).
+
 ## 2026-11-18 — `v2027.1.1` Pinned Vendordep Bump & Shared Core Parity Sync
 * **🔧 What Changed:**
   * **Vendordep Fixes (`vendordeps/`):** Bumped `photonlib` (`v2026.3.1 -> v2026.3.4`, fixing NT4 disconnects & OOB packet decode) and `AdvantageKit` (`26.0.1 -> 26.0.2`).

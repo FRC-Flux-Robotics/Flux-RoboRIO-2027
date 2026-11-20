@@ -162,7 +162,7 @@ public class MechanismIOSim implements MechanismIO {
           (plantType == SimPlantType.ARM_COSINE)
               ? kG * Math.cos(posRot * armRadPerPosRot)
               : kG;
-      double kpScale = (plantType == SimPlantType.ARM_COSINE) ? 25.0 : 1.0;
+      double kpScale = (plantType == SimPlantType.ARM_COSINE && armRadPerPosRot > 1.0) ? 25.0 : 1.0;
       double ksTerm = (Math.abs(err) > 1e-3) ? kS * Math.signum(err) : 0.0;
       appliedVolts =
           MathUtil.clamp(err * kP * kpScale - velRps * kD + ksTerm + gravityFf, -12.0, 12.0);

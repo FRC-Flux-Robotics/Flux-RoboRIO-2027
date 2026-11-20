@@ -37,13 +37,20 @@ public final class FaultSupervisor {
   public static final int JAM_DETECT_LOOPS = 13; // 260 ms at 50 Hz
   public static final int JAM_REVERSE_PULSE_LOOPS = 15; // 300 ms at 50 Hz
   public static final double JAM_REVERSE_VOLTAGE = -4.0;
+  public static final int JAM_CHANNEL_DEFAULT = 0;
+  public static final int JAM_CHANNEL_INTAKE = 1;
+  public static final int JAM_CHANNEL_INDEXER = 2;
+  public static final int JAM_CHANNEL_FEEDER = 3;
+  public static final int MAX_JAM_CHANNELS = 4;
 
   private final int[] cameraOutlierStreak;
   private final boolean[] cameraQuarantined;
   private final boolean[] steerEncoderFaulted = new boolean[4];
+  private final int[] jamStallCounters = new int[MAX_JAM_CHANNELS];
+  private final int[] jamReverseCountdowns = new int[MAX_JAM_CHANNELS];
+  private final double[] jamReverseVoltages = new double[MAX_JAM_CHANNELS];
+  private final int[] channelDejamEvents = new int[MAX_JAM_CHANNELS];
 
-  private int jamStallCounter = 0;
-  private int jamReverseCountdown = 0;
   private int dejamEventsTriggered = 0;
   private int tagBlackoutLoops = 0;
   private double activeDriveStatorLimitAmps = NOMINAL_DRIVE_STATOR_LIMIT_AMPS;
@@ -99,29 +106,54 @@ public final class FaultSupervisor {
   }
 
   /**
-   * Monitors an indexer/feeder mechanism for game-piece stall jams and returns the commanded
-   * voltage (automatically substituting a {@code -4.0 V} reverse unjam pulse when stalled).
+   * Monitors an indexer/feeder mechanism on the default jam channel for game-piece stall jams and
+   * returns the commanded voltage (automatically substituting a reverse unjam pulse when stalled).
    */
   public double filterMechanismCommandVoltage(
       double requestedVoltage, double statorCurrentAmps, double mechanismVelocityRps) {
-    if (jamReverseCountdown > 0) {
-      jamReverseCountdown--;
-      return JAM_REVERSE_VOLTAGE;
+    return filterMechanismCommandVoltage(
+        JAM_CHANNEL_DEFAULT, requestedVoltage, statorCurrentAmps, mechanismVelocityRps);
+  }
+
+  /**
+   * Monitors an independent mechanism jam channel ({@link #JAM_CHANNEL_INTAKE}, {@link
+   * #JAM_CHANNEL_INDEXER}, {@link #JAM_CHANNEL_FEEDER}) with isolated stall/reverse timers,
+   * automatically applying a signed opposite-direction {@code 4.0 V} reverse pulse when stalled.
+   */
+  public double filterMechanismCommandVoltage(
+      int channel, double requestedVoltage, double statorCurrentAmps, double mechanismVelocityRps) {
+    int ch = (channel >= 0 && channel < MAX_JAM_CHANNELS) ? channel : JAM_CHANNEL_DEFAULT;
+    if (jamReverseCountdowns[ch] > 0) {
+      jamReverseCountdowns[ch]--;
+      return jamReverseVoltages[ch];
     }
     if (Math.abs(requestedVoltage) > 1.0
         && statorCurrentAmps > JAM_CURRENT_THRESHOLD_AMPS
         && Math.abs(mechanismVelocityRps) < JAM_VELOCITY_THRESHOLD_RPS) {
-      jamStallCounter++;
-      if (jamStallCounter >= JAM_DETECT_LOOPS) {
-        jamStallCounter = 0;
-        jamReverseCountdown = JAM_REVERSE_PULSE_LOOPS;
+      jamStallCounters[ch]++;
+      if (jamStallCounters[ch] >= JAM_DETECT_LOOPS) {
+        jamStallCounters[ch] = 0;
+        jamReverseCountdowns[ch] = JAM_REVERSE_PULSE_LOOPS;
+        jamReverseVoltages[ch] =
+            (requestedVoltage >= 0.0) ? JAM_REVERSE_VOLTAGE : -JAM_REVERSE_VOLTAGE;
+        channelDejamEvents[ch]++;
         dejamEventsTriggered++;
-        return JAM_REVERSE_VOLTAGE;
+        return jamReverseVoltages[ch];
       }
     } else {
-      jamStallCounter = 0;
+      jamStallCounters[ch] = 0;
     }
     return requestedVoltage;
+  }
+
+  public boolean isChannelUnjamming(int channel) {
+    int ch = (channel >= 0 && channel < MAX_JAM_CHANNELS) ? channel : JAM_CHANNEL_DEFAULT;
+    return jamReverseCountdowns[ch] > 0;
+  }
+
+  public int dejamEventsTriggered(int channel) {
+    int ch = (channel >= 0 && channel < MAX_JAM_CHANNELS) ? channel : JAM_CHANNEL_DEFAULT;
+    return channelDejamEvents[ch];
   }
 
   /** Tracks AprilTag visibility blackouts and returns whether vision is currently in blackout. */
@@ -163,8 +195,10 @@ public final class FaultSupervisor {
     Arrays.fill(cameraOutlierStreak, 0);
     Arrays.fill(cameraQuarantined, false);
     Arrays.fill(steerEncoderFaulted, false);
-    jamStallCounter = 0;
-    jamReverseCountdown = 0;
+    Arrays.fill(jamStallCounters, 0);
+    Arrays.fill(jamReverseCountdowns, 0);
+    Arrays.fill(jamReverseVoltages, 0.0);
+    Arrays.fill(channelDejamEvents, 0);
     dejamEventsTriggered = 0;
     tagBlackoutLoops = 0;
     activeDriveStatorLimitAmps = NOMINAL_DRIVE_STATOR_LIMIT_AMPS;

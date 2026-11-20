@@ -24,17 +24,20 @@ import edu.wpi.first.units.measure.Voltage;
 import frc.lib.fluxfig.FluxFig.MechanismSpec;
 import frc.lib.util.PhoenixSignals;
 import frc.lib.util.PhoenixUtil;
+import java.util.Locale;
 
 /**
  * Real CTRE TalonFX implementation of {@link MechanismIO} (supports single motor or leader +
  * follower) configured directly from a {@link MechanismSpec}. Enforces <= 60A Stator and <= 40A
- * Supply limits and registers 50 Hz status signals with {@link PhoenixSignals}.
+ * Supply limits, supports {@link NeutralModeValue#Coast} on flywheel mechanisms ({@code Shooter}),
+ * and registers 50 Hz status signals with {@link PhoenixSignals}.
  */
 public class MechanismIOTalonFX implements MechanismIO, AutoCloseable {
 
   private final TalonFX motor;
   private final TalonFX follower;
   private final GravityTypeValue gravityType;
+  private final NeutralModeValue neutralMode;
 
   private final PositionVoltage positionRequest = new PositionVoltage(0).withSlot(0);
   private final VelocityVoltage velocityRequest = new VelocityVoltage(0).withSlot(0);
@@ -53,10 +56,18 @@ public class MechanismIOTalonFX implements MechanismIO, AutoCloseable {
   private final int signalGroup;
 
   public MechanismIOTalonFX(MechanismSpec spec) {
-    this(spec, spec.followerMotorId(), spec.invertFollower());
+    this(spec, spec.followerMotorId(), spec.invertFollower(), defaultNeutralModeFor(spec));
   }
 
   public MechanismIOTalonFX(MechanismSpec spec, int followerMotorId, boolean opposeLeader) {
+    this(spec, followerMotorId, opposeLeader, defaultNeutralModeFor(spec));
+  }
+
+  public MechanismIOTalonFX(
+      MechanismSpec spec,
+      int followerMotorId,
+      boolean opposeLeader,
+      NeutralModeValue neutralMode) {
     if (spec.statorLimitAmps() > 60.0 || spec.slipCurrentAmps() > 60.0) {
       throw new IllegalArgumentException(
           "Refusing stator/slip current > 60A on "
@@ -79,9 +90,10 @@ public class MechanismIOTalonFX implements MechanismIO, AutoCloseable {
     CANBus bus = new CANBus(spec.canBus());
     motor = new TalonFX(spec.motorId(), bus);
     follower = followerMotorId >= 0 ? new TalonFX(followerMotorId, bus) : null;
+    this.neutralMode = (neutralMode != null) ? neutralMode : NeutralModeValue.Brake;
 
     TalonFXConfiguration cfg = new TalonFXConfiguration();
-    cfg.MotorOutput.NeutralMode = NeutralModeValue.Brake;
+    cfg.MotorOutput.NeutralMode = this.neutralMode;
     cfg.MotorOutput.Inverted =
         spec.motorInverted()
             ? InvertedValue.Clockwise_Positive
@@ -185,6 +197,21 @@ public class MechanismIOTalonFX implements MechanismIO, AutoCloseable {
           () -> ParentDevice.optimizeBusUtilizationForAll(motor),
           3);
     }
+  }
+
+  /** Returns Coast for flywheel/shooter mechanisms so high-inertia wheels spin down safely. */
+  public static NeutralModeValue defaultNeutralModeFor(MechanismSpec spec) {
+    if (spec != null && spec.mechanism() != null) {
+      String lower = spec.mechanism().toLowerCase(Locale.ROOT);
+      if (lower.contains("shooter") || lower.contains("flywheel")) {
+        return NeutralModeValue.Coast;
+      }
+    }
+    return NeutralModeValue.Brake;
+  }
+
+  public NeutralModeValue getNeutralMode() {
+    return neutralMode;
   }
 
   /** Reads back the active TalonFXConfiguration registers from hardware/sim. */

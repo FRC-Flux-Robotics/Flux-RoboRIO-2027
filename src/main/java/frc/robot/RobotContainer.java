@@ -1,8 +1,10 @@
 package frc.robot;
 
+import com.ctre.phoenix6.signals.NeutralModeValue;
 import com.pathplanner.lib.auto.NamedCommands;
 import edu.wpi.first.apriltag.AprilTagFieldLayout;
 import edu.wpi.first.apriltag.AprilTagFields;
+import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Translation2d;
@@ -41,6 +43,7 @@ import frc.lib.safety.BatteryIO;
 import frc.lib.safety.FaultSupervisor;
 import frc.lib.util.FieldPositions;
 import frc.lib.util.LoggedTunableNumber;
+import frc.lib.util.PhoenixUtil;
 import frc.lib.util.PiecewiseSensitivity;
 import frc.lib.util.VirtualBatterySim;
 import frc.lib.vision.Vision;
@@ -53,9 +56,14 @@ import frc.robot.autos.StudentAutoRoutines;
 import frc.robot.commands.ShotCalibrationCmd;
 import frc.robot.util.ShotCalculator;
 import frc.robot.util.ShotCalculator.ShotSolution;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.BooleanSupplier;
+import java.util.stream.Stream;
 import org.littletonrobotics.junction.Logger;
 import org.littletonrobotics.junction.networktables.LoggedDashboardChooser;
 
@@ -89,11 +97,18 @@ public class RobotContainer {
     TRAINING
   }
 
-  /** Blue Alliance Octagonal Hub target position in 2026 Wall/Blue coordinates. */
-  public static final Translation2d HUB_TARGET_METERS = new Translation2d(4.63, 4.21);
+  /** Blue Alliance Octagonal Hub center in 2026 Wall/Blue coordinates (derived from AprilTag centroid). */
+  public static final Translation2d HUB_TARGET_METERS = new Translation2d(4.626, 4.035);
+
+  private static final int CONFIG_DISK_POLL_INTERVAL_LOOPS = 25;
 
   private final RobotIdentity identity;
+  private final Path configDir;
   private final FluxFig fluxFig;
+  private final String bootConfigSha256;
+  private final String bootEffectiveVersion;
+  private final String bootEffectiveSnapshot;
+  private final long bootDiskFingerprint;
   private final FaultSupervisor faultSupervisor;
   private final BatteryIO batteryIo;
   private final VirtualBatterySim virtualBatterySim;
@@ -120,19 +135,34 @@ public class RobotContainer {
   private final CommandXboxController operatorController = new CommandXboxController(1);
   private ShotSolution latestTeleopShotSolution =
       new ShotSolution(Rotation2d.kZero, 0.0, 0.0, 0.0, 0.0, 0.0);
+  private boolean configRestartRequired = false;
+  private int disabledConfigPollCounter = 0;
 
   public RobotContainer(RobotIdentity identity) {
     this(
         identity,
         Filesystem.getDeployDirectory().toPath().resolve("configs"),
+        null,
         !RobotBase.isReal());
   }
 
   /** Deterministic constructor allowing explicit config directory and simulated IO selection. */
   public RobotContainer(RobotIdentity identity, Path configDir, boolean forceSimIo) {
+    this(identity, configDir, null, forceSimIo);
+  }
+
+  /** Constructor accepting a pre-loaded boot {@link FluxFig} snapshot to avoid duplicate disk loads. */
+  public RobotContainer(
+      RobotIdentity identity, Path configDir, FluxFig preloadedFluxFig, boolean forceSimIo) {
     this.identity = identity;
+    this.configDir = configDir;
     this.forceSimIo = forceSimIo;
-    this.fluxFig = FluxFig.load(configDir, identity.name());
+    this.fluxFig =
+        (preloadedFluxFig != null) ? preloadedFluxFig : FluxFig.load(configDir, identity.name());
+    this.bootConfigSha256 = this.fluxFig.getConfigSha256();
+    this.bootEffectiveVersion = this.fluxFig.getEffectiveVersion();
+    this.bootEffectiveSnapshot = this.fluxFig.getEffectiveSnapshot();
+    this.bootDiskFingerprint = computeConfigDiskFingerprint(configDir);
 
     String coordSysName = fluxFig.getString("coordinateSystem");
     FieldPositions.setCoordinateSystem(
@@ -174,6 +204,7 @@ public class RobotContainer {
         moduleIos[i] = new ModuleIOSim(swerveConfig);
       }
     } else {
+      PhoenixUtil.beginCanInitBudget();
       gyroIo = new GyroIOPigeon2(swerveConfig.pigeonId(), swerveConfig.canBus());
       for (int i = 0; i < 4; i++) {
         moduleIos[i] = new ModuleIOTalonFX(swerveConfig, swerveConfig.corners()[i]);
@@ -204,6 +235,10 @@ public class RobotContainer {
     this.preMatchCalibrator = new PreMatchCalibrator(drive, vision);
 
     boolean useSimMechanisms = forceSimIo || ghostSuperstructureActive;
+    if (!useSimMechanisms) {
+      // Refresh boot CAN retry budget after potentially slow AprilTagFieldLayout loading.
+      PhoenixUtil.beginCanInitBudget();
+    }
     String mechProfile =
         (identity == RobotIdentity.FUEL) ? fluxFig.getActiveProfile() : "FUEL";
 
@@ -235,7 +270,13 @@ public class RobotContainer {
 
     MechanismSpec shooterSpec = fluxFig.getMechanismSpec(mechProfile, "Shooter");
     MechanismIO shooterIo =
-        useSimMechanisms ? new MechanismIOSim(shooterSpec) : new MechanismIOTalonFX(shooterSpec);
+        useSimMechanisms
+            ? new MechanismIOSim(shooterSpec)
+            : new MechanismIOTalonFX(
+                shooterSpec,
+                shooterSpec.followerMotorId(),
+                shooterSpec.invertFollower(),
+                NeutralModeValue.Coast);
     this.shooter = new VelocityMechanism(shooterIo, shooterSpec);
 
     MechanismSpec hoodSpec = fluxFig.getMechanismSpec(mechProfile, "Hood");
@@ -260,8 +301,10 @@ public class RobotContainer {
     configureAutoChooser();
     configureButtonBindings();
 
-    Logger.recordOutput("FluxFig/EffectiveVersion", fluxFig.getEffectiveVersion());
-    Logger.recordOutput("FluxFig/EffectiveSnapshot", fluxFig.getEffectiveSnapshot());
+    Logger.recordOutput("FluxFig/BootConfigSHA256", bootConfigSha256);
+    Logger.recordOutput("FluxFig/EffectiveVersion", bootEffectiveVersion);
+    Logger.recordOutput("FluxFig/EffectiveSnapshot", bootEffectiveSnapshot);
+    Logger.recordOutput("FluxFig/RestartRequired", false);
   }
 
   private void registerNamedCommands() {
@@ -325,12 +368,23 @@ public class RobotContainer {
         "Shop 5x3 Shuttle Path", drive.followPathCommand("Shop_Center_Shuttle"));
     autoChooser.addOption(
         "Pre-Kickoff 2-Piece Template", drive.followPathCommand("PreKickoff_2Piece_Template"));
-    autoChooser.addOption("Pit System Check (20s)", createPitSystemCheckCommand());
     autoChooser.addOption(
-        "15-Min Floor Blitz", createBlitz15MinCommand(Blitz15MinCmd.DEFAULT_CHECKPOINT_PATH));
+        "Pit System Check (20s)",
+        createPitSystemCheckCommand().onlyIf(() -> !DriverStation.isFMSAttached()));
+    autoChooser.addOption(
+        "15-Min Floor Blitz",
+        createBlitz15MinCommand(Blitz15MinCmd.DEFAULT_CHECKPOINT_PATH)
+            .onlyIf(() -> !DriverStation.isFMSAttached()));
+  }
+
+  /** Pit, calibration, and homing triggers require non-FMS WPILib Test mode. */
+  public static boolean isPitTestAllowed() {
+    return !DriverStation.isFMSAttached() && DriverStation.isTest();
   }
 
   private void configureButtonBindings() {
+    BooleanSupplier pitTestAllowed = RobotContainer::isPitTestAllowed;
+
     drive.setDefaultCommand(
         DriveCommands.joystickDrive(
             drive,
@@ -365,15 +419,12 @@ public class RobotContainer {
                 drive,
                 () -> new Pose2d(2.5, 4.1, Rotation2d.kZero),
                 () -> driverController.getLeftTriggerAxis() > 0.5));
-    driverController.b().onTrue(Commands.runOnce(drive::stopWithX, drive));
-    driverController
-        .start()
-        .onTrue(createPitSystemCheckCommand().onlyIf(() -> !DriverStation.isFMSAttached()));
+    driverController.b().whileTrue(Commands.run(drive::stopWithX, drive));
+    driverController.start().onTrue(createPitSystemCheckCommand().onlyIf(pitTestAllowed));
     driverController
         .back()
         .whileTrue(
-            createBlitz15MinCommand(Blitz15MinCmd.DEFAULT_CHECKPOINT_PATH)
-                .onlyIf(() -> !DriverStation.isFMSAttached()));
+            createBlitz15MinCommand(Blitz15MinCmd.DEFAULT_CHECKPOINT_PATH).onlyIf(pitTestAllowed));
 
     operatorController
         .leftBumper()
@@ -383,8 +434,8 @@ public class RobotContainer {
         .rightBumper()
         .onTrue(Commands.runOnce(() -> superstructure.requestState(State.OUTTAKING), superstructure))
         .onFalse(Commands.runOnce(() -> superstructure.requestState(State.IDLE), superstructure));
-    operatorController.y().onTrue(createShotCalibrationCommand());
-    operatorController.start().onTrue(new HardStopHomingCmd(hood));
+    operatorController.y().onTrue(createShotCalibrationCommand().onlyIf(pitTestAllowed));
+    operatorController.start().onTrue(new HardStopHomingCmd(hood).onlyIf(pitTestAllowed));
   }
 
   public PitSystemCheckCmd createPitSystemCheckCommand() {
@@ -432,18 +483,74 @@ public class RobotContainer {
   }
 
   /**
-   * Executes passive MegaTag1 gyro seeding, starting pose audit, and {@code < 50 ms} SFTP {@code
-   * active-profile.txt} hot-reload while Disabled.
+   * Executes passive MegaTag1 gyro seeding and starting pose audit while Disabled. Never mutates
+   * the reported boot {@code ConfigSHA256} or motor gains in place; if config files change on disk,
+   * sets {@code FluxFig/RestartRequired = true} and warns that a robot code restart is required.
    */
   public void disabledPeriodic() {
     boolean fms = DriverStation.isFMSAttached();
     fluxFig.lockProductionOnFms(fms);
-    if (!fms && fluxFig.reloadIfChanged()) {
-      applyFieldAndArenaConfig();
-      Logger.recordOutput("FluxFig/EffectiveVersion", fluxFig.getEffectiveVersion());
-      Logger.recordOutput("FluxFig/EffectiveSnapshot", fluxFig.getEffectiveSnapshot());
+    if (!fms) {
+      if (disabledConfigPollCounter == 0) {
+        checkConfigDiskChangeNow();
+      }
+      disabledConfigPollCounter = (disabledConfigPollCounter + 1) % CONFIG_DISK_POLL_INTERVAL_LOOPS;
     }
+    Logger.recordOutput("FluxFig/BootConfigSHA256", bootConfigSha256);
+    Logger.recordOutput("FluxFig/EffectiveVersion", bootEffectiveVersion);
+    Logger.recordOutput("FluxFig/EffectiveSnapshot", bootEffectiveSnapshot);
+    Logger.recordOutput("FluxFig/RestartRequired", configRestartRequired);
     preMatchCalibrator.updateDisabled();
+  }
+
+  /** Checks disk configs against boot fingerprint without mutating active boot motor gains/SHA. */
+  public boolean checkConfigDiskChangeNow() {
+    long currentFingerprint = computeConfigDiskFingerprint(configDir);
+    if (currentFingerprint != bootDiskFingerprint) {
+      if (!configRestartRequired) {
+        configRestartRequired = true;
+        DriverStation.reportWarning(
+            "FluxFig configs changed on disk; restart robot code (frcKillRobot.sh -t -r) to apply"
+                + " updated motor gains/limits (still running boot ConfigSHA256="
+                + bootConfigSha256
+                + ").",
+            false);
+      }
+      return true;
+    }
+    return false;
+  }
+
+  public boolean isConfigRestartRequired() {
+    return configRestartRequired;
+  }
+
+  public String getBootConfigSha256() {
+    return bootConfigSha256;
+  }
+
+  private static long computeConfigDiskFingerprint(Path dir) {
+    if (dir == null || !Files.isDirectory(dir)) {
+      return 0L;
+    }
+    long hash = 1125899906842597L;
+    try (Stream<Path> s = Files.list(dir)) {
+      for (Path p :
+          s.filter(Files::isRegularFile)
+              .filter(
+                  f -> {
+                    String n = f.getFileName().toString().toLowerCase(Locale.ROOT);
+                    return n.endsWith(".csv") || n.equals(FluxFig.ACTIVE_PROFILE_FILE);
+                  })
+              .sorted(Comparator.comparing(f -> f.getFileName().toString()))
+              .toList()) {
+        hash = 31L * hash + p.getFileName().toString().hashCode();
+        hash = 31L * hash + Files.getLastModifiedTime(p).toMillis();
+        hash = 31L * hash + Files.size(p);
+      }
+    } catch (IOException ignored) {
+    }
+    return hash;
   }
 
   /**
@@ -497,7 +604,12 @@ public class RobotContainer {
     ShotSolution solution =
         shotCalculator.calculate(
             pose, fieldSpeeds, FieldPositions.forAlliance(HUB_TARGET_METERS));
-    superstructure.applyShotSolution(solution, fireWhenReady);
+    double headingErrorRad =
+        Math.abs(
+            MathUtil.angleModulus(
+                solution.driveAimHeading().minus(pose.getRotation()).getRadians()));
+    boolean inRange = shotCalculator.isInRange(solution.effectiveDistanceMeters());
+    superstructure.applyShotSolution(solution, fireWhenReady, headingErrorRad, inRange);
     return solution;
   }
 

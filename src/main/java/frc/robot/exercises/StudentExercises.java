@@ -206,9 +206,11 @@ public final class StudentExercises {
             Commands.runOnce(
                 () -> {
                   drive.setPose(new Pose2d(3.10, 4.05, Rotation2d.kZero));
-                  superstructure.prepShot(54.0, 2.10);
+                  superstructure.prepShot(
+                      Superstructure.DEFAULT_SHORT_SHOOTER_RPS,
+                      Superstructure.DEFAULT_SHORT_HOOD_ROT);
                 }),
-            // Volley 1: Fire preload into Blue Hub (4.63m, 4.21m)
+            // Volley 1: Fire preload into Blue Hub (4.626m, 4.035m)
             StudentAutoRoutines.createAimAndShootHubCommand(
                 drive, superstructure, shotCalculator, 2.0),
             // PathPlanner "Hub to Depot": Collect 3 Depot FUEL balls and return to Hub

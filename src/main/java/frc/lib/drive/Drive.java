@@ -151,10 +151,9 @@ public class Drive extends SubsystemBase {
         module.periodic();
       }
 
-      sampleTimestamps = PhoenixOdometryThread.getInstance().drainTimestamps();
-      if (sampleTimestamps.length == 0) {
-        sampleTimestamps = modules[0].getOdometryTimestamps();
-      }
+      double[] moduleTimestamps = modules[0].getOdometryTimestamps();
+      double[] threadTimestamps = PhoenixOdometryThread.getInstance().drainTimestamps();
+      sampleTimestamps = (moduleTimestamps.length > 0) ? moduleTimestamps : threadTimestamps;
     } finally {
       PhoenixOdometryThread.ODOMETRY_LOCK.unlock();
     }

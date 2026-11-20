@@ -200,10 +200,31 @@ public class Tier1ArchitectureHygieneTest {
     if (!robotJava.contains("SignalLogger.enableAutoLogging(false)")) missingHooks++;
     if (!robotJava.contains("WPILOGWriter") || !robotJava.contains("NT4Publisher")) missingHooks++;
     if (!robotJava.contains("Logger.start()")) missingHooks++;
+    if (robotJava.indexOf("ConfigSHA256") < 0
+        || robotJava.indexOf("ConfigSHA256") > robotJava.indexOf("Logger.start()")) {
+      missingHooks++;
+    }
+    if (!robotJava.contains("setBrownoutVoltage(")
+        || !robotJava.contains("LiveWindow.disableAllTelemetry()")
+        || !robotJava.contains("LoggedPowerDistribution")
+        || !robotJava.contains("writeRobotStateFile(")
+        || !robotJava.contains("testInit(")) {
+      missingHooks++;
+    }
     if (!robotJava.contains("RobotIdentity.detect()")
-        || !identityJava.contains("/sys/firmware/devicetree/base/serial-number")) missingHooks++;
+        || !identityJava.contains("/sys/firmware/devicetree/base/serial-number")
+        || !identityJava.contains("/home/lvuser/robot-identity.txt")) {
+      missingHooks++;
+    }
     if (!robotJava.contains("autonomousInit(") || !robotJava.contains("teleopInit(")) missingHooks++;
-    if (!containerJava.contains("reloadIfChanged()")) missingHooks++;
+    if (containerJava.contains("fluxFig.reloadIfChanged()")
+        || !containerJava.contains("FluxFig/RestartRequired")) {
+      missingHooks++;
+    }
+    if (!containerJava.contains(".b().whileTrue(")
+        || !containerJava.contains("isPitTestAllowed")) {
+      missingHooks++;
+    }
     if (!containerJava.contains("setRobotOrientation(")) missingHooks++;
     if (!containerJava.contains("getBatteryVoltage()")) missingHooks++;
 
@@ -226,16 +247,32 @@ public class Tier1ArchitectureHygieneTest {
         robotJava.contains("Logger.start()"),
         "Robot.java must call Logger.start() so AdvantageKit records .wpilog and NT4 outputs");
     assertTrue(
+        robotJava.indexOf("ConfigSHA256") >= 0
+            && robotJava.indexOf("ConfigSHA256") < robotJava.indexOf("Logger.start()"),
+        "Robot.java must record ConfigSHA256 metadata BEFORE Logger.start()");
+    assertTrue(
+        robotJava.contains("setBrownoutVoltage(")
+            && robotJava.contains("LiveWindow.disableAllTelemetry()")
+            && robotJava.contains("LoggedPowerDistribution")
+            && robotJava.contains("writeRobotStateFile(")
+            && robotJava.contains("testInit("),
+        "Robot.java must configure 6.0V brownout, disable LiveWindow telemetry, log PowerDistribution, write /tmp/flux-robot-state, and isolate testInit()");
+    assertTrue(
         robotJava.contains("RobotIdentity.detect()")
-            && identityJava.contains("/sys/firmware/devicetree/base/serial-number"),
-        "Robot.java must resolve RobotIdentity.detect() with Linux device-tree and identity-tag fallback");
+            && identityJava.contains("/sys/firmware/devicetree/base/serial-number")
+            && identityJava.contains("/home/lvuser/robot-identity.txt"),
+        "Robot.java must resolve RobotIdentity.detect() with roboRIO/SystemCore tag and device-tree fallbacks");
     assertTrue(
         robotJava.contains("autonomousInit(") && robotJava.contains("teleopInit("),
         "Robot.java must implement autonomousInit() and teleopInit()");
 
     assertTrue(
-        containerJava.contains("reloadIfChanged()"),
-        "RobotContainer.disabledPeriodic() must poll fluxFig.reloadIfChanged()");
+        !containerJava.contains("fluxFig.reloadIfChanged()")
+            && containerJava.contains("FluxFig/RestartRequired"),
+        "RobotContainer.disabledPeriodic() must require restart instead of overwriting boot ConfigSHA256");
+    assertTrue(
+        containerJava.contains(".b().whileTrue(") && containerJava.contains("isPitTestAllowed"),
+        "RobotContainer must bind X-Lock with .whileTrue(...) and gate pit/homing commands behind !FMS && Test");
     assertTrue(
         containerJava.contains("setRobotOrientation("),
         "RobotContainer.periodicUpdate() must feed gyro orientation to Vision for MT1->MT2 handoff");
@@ -447,8 +484,9 @@ public class Tier1ArchitectureHygieneTest {
             Paths.get("src/main/deploy/configs/range_table.csv"), StandardCharsets.UTF_8);
     assertTrue(
         rangeTableCsv.contains("distanceMeters,shooterRps,hoodRotations,timeOfFlightSec")
-            && rangeTableCsv.contains("1.50,52.0,1.80,0.22"),
-        "range_table.csv must contain the 4-column FUEL shooting interpolation header and baseline calibration rows");
+            && rangeTableCsv.contains("1.22,33.33,0.00,0.22")
+            && rangeTableCsv.contains("4.67,40.00,8.85,0.62"),
+        "range_table.csv must contain the 4-column FUEL shooting interpolation header and proven NYTR 33.33-40.00 RPS rows");
   }
 
   @Test

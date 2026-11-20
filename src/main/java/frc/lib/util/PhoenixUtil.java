@@ -22,41 +22,58 @@ public final class PhoenixUtil {
   private static volatile int skippedCalls = 0;
   private static volatile int failedCalls = 0;
   private static volatile boolean budgetWarningReported = false;
+  private static volatile String lastFailureMessage = "";
 
   private PhoenixUtil() {}
 
   /**
+   * Starts or refreshes the boot CAN configuration retry budget immediately before hardware init
+   * phases (e.g., after slow {@code AprilTagFieldLayout} loads).
+   */
+  public static void beginCanInitBudget() {
+    beginCanInitBudget(DEFAULT_CAN_CONFIG_BUDGET_SECONDS);
+  }
+
+  public static void beginCanInitBudget(double budgetSeconds) {
+    configBudgetSeconds = Math.max(0.0, budgetSeconds);
+    budgetStartNanos = System.nanoTime();
+    budgetWarningReported = false;
+  }
+
+  /**
    * Retries a CTRE configuration call until it succeeds, max attempts are exhausted, or the shared
-   * boot {@code CanConfigBudget} expires.
+   * boot {@code CanConfigBudget} expires. Always executes at least 1 attempt so motor current and
+   * soft limits are never silently skipped after slow boot phases.
    */
   public static StatusCode tryUntilOk(Supplier<StatusCode> configCall, int maxAttempts) {
     return tryUntilOk("CTREConfig", configCall, maxAttempts);
   }
 
   /**
-   * Retries a named CTRE configuration call under the shared boot {@code CanConfigBudget}. When the
-   * budget is exhausted, skips immediately without blocking boot.
+   * Retries a named CTRE configuration call under the shared boot {@code CanConfigBudget}. Always
+   * performs at least 1 attempt even if the retry budget has elapsed, skipping only subsequent
+   * retries when out of budget, and reports any final failure loudly to Driver Station.
    */
   public static StatusCode tryUntilOk(
       String label, Supplier<StatusCode> configCall, int maxAttempts) {
-    if (getRemainingConfigBudgetSeconds() <= 0.0) {
-      skippedCalls++;
-      reportBudgetExhaustedOnce(label);
-      return StatusCode.TxTimeout;
-    }
-
+    int attempts = Math.max(1, maxAttempts);
     StatusCode status = StatusCode.StatusCodeNotInitialized;
-    for (int i = 0; i < maxAttempts; i++) {
-      if (getRemainingConfigBudgetSeconds() <= 0.0) {
+    for (int i = 0; i < attempts; i++) {
+      if (i > 0 && getRemainingConfigBudgetSeconds() <= 0.0) {
         skippedCalls++;
         reportBudgetExhaustedOnce(label);
-        return StatusCode.TxTimeout;
+        break;
       }
       status = configCall.get();
       if (status.isOK()) {
         return status;
       }
-      if (i + 1 < maxAttempts && getRemainingConfigBudgetSeconds() > 0.0) {
+      if (i + 1 < attempts) {
+        if (getRemainingConfigBudgetSeconds() <= 0.0) {
+          skippedCalls++;
+          reportBudgetExhaustedOnce(label);
+          break;
+        }
         try {
           Thread.sleep(RETRY_SLEEP_MS);
         } catch (InterruptedException e) {
@@ -67,6 +84,13 @@ public final class PhoenixUtil {
     }
     if (!status.isOK()) {
       failedCalls++;
+      lastFailureMessage =
+          "PhoenixUtil CAN config FAILED for '"
+              + label
+              + "' (status="
+              + status
+              + "); device may retain unsafe defaults.";
+      DriverStation.reportError(lastFailureMessage, false);
     }
     return status;
   }
@@ -84,6 +108,10 @@ public final class PhoenixUtil {
     return failedCalls;
   }
 
+  public static String getLastFailureMessage() {
+    return lastFailureMessage;
+  }
+
   /** Resets the shared boot config budget (intended for isolated unit/sim test suites). */
   public static void resetConfigBudgetForTest() {
     resetConfigBudgetForTest(DEFAULT_CAN_CONFIG_BUDGET_SECONDS);
@@ -95,6 +123,7 @@ public final class PhoenixUtil {
     skippedCalls = 0;
     failedCalls = 0;
     budgetWarningReported = false;
+    lastFailureMessage = "";
   }
 
   private static void reportBudgetExhaustedOnce(String label) {

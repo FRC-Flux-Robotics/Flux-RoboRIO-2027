@@ -102,7 +102,9 @@ public final class StudentAutoRoutines {
             Commands.runOnce(
                 () -> {
                   drive.setPose(new Pose2d(3.10, 4.05, Rotation2d.kZero));
-                  superstructure.prepShot(54.0, 2.10);
+                  superstructure.prepShot(
+                      Superstructure.DEFAULT_SHORT_SHOOTER_RPS,
+                      Superstructure.DEFAULT_SHORT_HOOD_ROT);
                 }),
             createAimAndShootHubCommand(drive, superstructure, shotCalculator, 2.0),
             Commands.runOnce(() -> superstructure.requestState(State.INTAKING)),
@@ -129,7 +131,11 @@ public final class StudentAutoRoutines {
       Drive drive, Superstructure superstructure, ShotCalculator shotCalculator) {
     return Commands.sequence(
             resetPoseToPathStart(drive, "Hub to Depot"),
-            Commands.runOnce(() -> superstructure.prepShot(54.0, 2.10)),
+            Commands.runOnce(
+                () ->
+                    superstructure.prepShot(
+                        Superstructure.DEFAULT_SHORT_SHOOTER_RPS,
+                        Superstructure.DEFAULT_SHORT_HOOD_ROT)),
             createAimAndShootHubCommand(drive, superstructure, shotCalculator, 1.8),
             withLoopTimeout(drive.followPathCommand("Hub to Depot"), 5.2),
             createAimAndShootHubCommand(drive, superstructure, shotCalculator, 2.0),
@@ -157,7 +163,11 @@ public final class StudentAutoRoutines {
       Drive drive, Superstructure superstructure, ShotCalculator shotCalculator) {
     return Commands.sequence(
             resetPoseToPathStart(drive, "Hub to Depot"),
-            Commands.runOnce(() -> superstructure.prepShot(54.0, 2.10)),
+            Commands.runOnce(
+                () ->
+                    superstructure.prepShot(
+                        Superstructure.DEFAULT_SHORT_SHOOTER_RPS,
+                        Superstructure.DEFAULT_SHORT_HOOD_ROT)),
             createAimAndShootHubCommand(drive, superstructure, shotCalculator, 2.0),
             withLoopTimeout(drive.followPathCommand("Hub to Depot"), 5.4),
             createAimAndShootHubCommand(drive, superstructure, shotCalculator, 2.4),
@@ -177,7 +187,11 @@ public final class StudentAutoRoutines {
       Drive drive, Superstructure superstructure, ShotCalculator shotCalculator) {
     return Commands.sequence(
             resetPoseToPathStart(drive, "Hub to Depot"),
-            Commands.runOnce(() -> superstructure.prepShot(54.0, 2.10)),
+            Commands.runOnce(
+                () ->
+                    superstructure.prepShot(
+                        Superstructure.DEFAULT_SHORT_SHOOTER_RPS,
+                        Superstructure.DEFAULT_SHORT_HOOD_ROT)),
             createAimAndShootHubCommand(drive, superstructure, shotCalculator, 2.2),
             withLoopTimeout(drive.followPathCommand("Hub to Depot"), 5.8),
             createAimAndShootHubCommand(drive, superstructure, shotCalculator, 2.6),
@@ -195,7 +209,11 @@ public final class StudentAutoRoutines {
       Drive drive, Superstructure superstructure, ShotCalculator shotCalculator) {
     return Commands.sequence(
             resetPoseToPathStart(drive, "Left to Depot"),
-            Commands.runOnce(() -> superstructure.prepShot(60.0, 3.20)),
+            Commands.runOnce(
+                () ->
+                    superstructure.prepShot(
+                        Superstructure.DEFAULT_MID_SHOOTER_RPS,
+                        Superstructure.DEFAULT_MID_HOOD_ROT)),
             createAimAndShootHubCommand(drive, superstructure, shotCalculator, 2.2),
             withLoopTimeout(drive.followPathCommand("Left to Depot"), 6.2),
             createAimAndShootHubCommand(drive, superstructure, shotCalculator, 2.6),
@@ -213,7 +231,11 @@ public final class StudentAutoRoutines {
       Drive drive, Superstructure superstructure, ShotCalculator shotCalculator) {
     return Commands.sequence(
             resetPoseToPathStart(drive, "Right to Depot"),
-            Commands.runOnce(() -> superstructure.prepShot(60.0, 3.20)),
+            Commands.runOnce(
+                () ->
+                    superstructure.prepShot(
+                        Superstructure.DEFAULT_MID_SHOOTER_RPS,
+                        Superstructure.DEFAULT_MID_HOOD_ROT)),
             createAimAndShootHubCommand(drive, superstructure, shotCalculator, 2.2),
             withLoopTimeout(drive.followPathCommand("Right to Depot"), 6.8),
             createAimAndShootHubCommand(drive, superstructure, shotCalculator, 2.6),
@@ -224,7 +246,7 @@ public final class StudentAutoRoutines {
   /**
    * Reference Example Autonomous Routine on the 2026 REBUILT field: starts at {@code (2.0, 2.6,
    * 0°)}, drives a rectangle on the Blue Wing while intaking floor {@code FUEL}, aims and fires at
-   * the Blue Hub {@code (4.63, 4.21)}, and drives a 360° circle orbit.
+   * the Blue Hub {@code (4.626, 4.035)}, and drives a 360° circle orbit.
    */
   public static Command createExampleSquareCircleAndShootAuto(
       Drive drive, Superstructure superstructure, ShotCalculator shotCalculator) {
@@ -353,11 +375,12 @@ public final class StudentAutoRoutines {
                       pose,
                       fieldSpeeds,
                       FieldPositions.forAlliance(RobotContainer.HUB_TARGET_METERS));
-              superstructure.applyShotSolution(sol, true);
-
               double yawErrRad =
                   MathUtil.angleModulus(
                       sol.driveAimHeading().minus(pose.getRotation()).getRadians());
+              boolean inRange = shotCalculator.isInRange(sol.effectiveDistanceMeters());
+              superstructure.applyShotSolution(sol, true, Math.abs(yawErrRad), inRange);
+
               double omegaCmd = MathUtil.clamp(yawErrRad * 6.5, -6.0, 6.0);
               drive.runVelocity(new ChassisSpeeds(0.0, 0.0, omegaCmd));
               loops[0]++;
@@ -402,11 +425,12 @@ public final class StudentAutoRoutines {
                       pose,
                       new ChassisSpeeds(vxField, vyField, 0.0),
                       FieldPositions.forAlliance(RobotContainer.HUB_TARGET_METERS));
-              superstructure.applyShotSolution(sol, true);
-
               double yawErrRad =
                   MathUtil.angleModulus(
                       sol.driveAimHeading().minus(pose.getRotation()).getRadians());
+              boolean inRange = shotCalculator.isInRange(sol.effectiveDistanceMeters());
+              superstructure.applyShotSolution(sol, true, Math.abs(yawErrRad), inRange);
+
               double omegaCmd =
                   MathUtil.clamp(
                       yawErrRad * 6.5 + sol.headingFeedforwardRadPerSec(), -7.5, 7.5);

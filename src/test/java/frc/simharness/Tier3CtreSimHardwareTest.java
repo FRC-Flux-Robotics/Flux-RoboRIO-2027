@@ -9,6 +9,7 @@ import com.ctre.phoenix6.configs.CANcoderConfiguration;
 import com.ctre.phoenix6.configs.TalonFXConfiguration;
 import com.ctre.phoenix6.hardware.TalonFX;
 import com.ctre.phoenix6.signals.InvertedValue;
+import com.ctre.phoenix6.signals.NeutralModeValue;
 import com.ctre.phoenix6.sim.TalonFXSimState;
 import com.ctre.phoenix6.unmanaged.Unmanaged;
 import edu.wpi.first.hal.HAL;
@@ -23,6 +24,7 @@ import edu.wpi.first.wpilibj.simulation.SimHooks;
 import frc.lib.drive.Drive;
 import frc.lib.drive.GyroIO.GyroIOInputs;
 import frc.lib.drive.GyroIOPigeon2;
+import frc.lib.drive.ModuleIO.ModuleIOInputs;
 import frc.lib.drive.ModuleIOTalonFX;
 import frc.lib.drive.PhoenixOdometryThread;
 import frc.lib.drive.SwerveConfig;
@@ -127,6 +129,43 @@ public class Tier3CtreSimHardwareTest {
 
       assertEquals(60.0, readback.CurrentLimits.StatorCurrentLimit, 0.1);
       assertEquals(40.0, readback.CurrentLimits.SupplyCurrentLimit, 0.1);
+      assertEquals(
+          NeutralModeValue.Brake,
+          readback.MotorOutput.NeutralMode,
+          "Non-flywheel mechanisms must default to Brake neutral mode");
+    }
+
+    // Verify FUEL Shooter flywheel configures Coast neutral mode in CTRE TalonFX hardware registers
+    MechanismSpec baseShooter = fig.getMechanismSpec("FUEL", "Shooter");
+    MechanismSpec rioShooter =
+        new MechanismSpec(
+            baseShooter.robot(),
+            baseShooter.mechanism(),
+            35,
+            "rio",
+            baseShooter.statorLimitAmps(),
+            baseShooter.supplyLimitAmps(),
+            baseShooter.slipCurrentAmps(),
+            baseShooter.gravityType(),
+            baseShooter.kP(),
+            baseShooter.kI(),
+            baseShooter.kD(),
+            baseShooter.kS(),
+            baseShooter.kV(),
+            baseShooter.kA(),
+            baseShooter.kG(),
+            baseShooter.minPosRot(),
+            baseShooter.maxPosRot(),
+            36,
+            true,
+            baseShooter.motorInverted(),
+            baseShooter.gearRatio());
+    try (MechanismIOTalonFX shooterIo = new MechanismIOTalonFX(rioShooter)) {
+      TalonFXConfiguration shooterReadback = shooterIo.readAppliedConfig();
+      assertEquals(
+          NeutralModeValue.Coast,
+          shooterReadback.MotorOutput.NeutralMode,
+          "FUEL Shooter flywheel must apply NeutralModeValue.Coast in TalonFX config");
     }
 
     // Verify that attempting the NYTR 120A SlipCurrent overwrite is caught immediately
@@ -336,9 +375,27 @@ public class Tier3CtreSimHardwareTest {
               + hardwareDrive.getPose().getX()
               + ")");
 
+      // Verify ModuleIOTalonFX and GyroIOPigeon2 populate replayable odometry timestamps
+      PhoenixOdometryThread.getInstance().sampleOnce(12.345);
+      ModuleIOInputs modInputs = new ModuleIOInputs();
       GyroIOInputs gyroInputs = new GyroIOInputs();
       PhoenixSignals.refreshAll();
+      modFl.updateInputs(modInputs);
       gyroIo.updateInputs(gyroInputs);
+      assertTrue(
+          modInputs.odometryTimestamps.length > 0,
+          "ModuleIOTalonFX must populate non-empty odometryTimestamps for AdvantageKit replay");
+      assertEquals(
+          modInputs.odometryTimestamps.length,
+          modInputs.odometryDrivePositionsRad.length,
+          "ModuleIOTalonFX odometryTimestamps length must match drive position samples");
+      assertTrue(
+          gyroInputs.odometryYawTimestamps.length > 0,
+          "GyroIOPigeon2 must populate non-empty odometryYawTimestamps for AdvantageKit replay");
+      assertEquals(
+          gyroInputs.odometryYawTimestamps.length,
+          gyroInputs.odometryYawPositions.length,
+          "GyroIOPigeon2 odometryYawTimestamps length must match yaw position samples");
     }
   }
 }
