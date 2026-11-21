@@ -413,6 +413,30 @@ public class RobotContainer {
     superstructure.requestState(State.IDLE);
   }
 
+  /** Zeroes relative encoders for {@code Tilter} and {@code Hood} at their physically stowed stops. */
+  public void resetMechanismEncoders() {
+    tilter.stop();
+    hood.stop();
+    tilter.resetPosition();
+    hood.resetPosition();
+    Logger.recordOutput("Superstructure/EncodersZeroed", true);
+  }
+
+  /**
+   * Manual close-range shoot fallback ({@code 33.33 RPS}, {@code 2.80 rot} hood): waits for
+   * flywheel and hood tolerances before feeding without requiring AprilTag localization.
+   */
+  public Command createManualShortShotCommand() {
+    return Commands.run(
+        () ->
+            superstructure.shoot(
+                Superstructure.DEFAULT_SHORT_SHOOTER_RPS,
+                Superstructure.DEFAULT_SHORT_HOOD_ROT,
+                0.0,
+                true),
+        superstructure);
+  }
+
   /**
    * Selects the active battery voltage fed to {@link FaultSupervisor}: physical roboRIO hardware
    * always uses {@link RobotController#getBatteryVoltage()} even when Ghost Superstructure mode is
@@ -506,8 +530,17 @@ public class RobotContainer {
         .onFalse(
             Commands.runOnce(() -> superstructure.requestState(State.IDLE), superstructure)
                 .ignoringDisable(true));
+    operatorController
+        .rightTrigger()
+        .whileTrue(createManualShortShotCommand())
+        .onFalse(
+            Commands.runOnce(() -> superstructure.requestState(State.IDLE), superstructure)
+                .ignoringDisable(true));
     operatorController.y().onTrue(createShotCalibrationCommand().onlyIf(pitTestAllowed));
     operatorController.start().onTrue(new HardStopHomingCmd(hood).onlyIf(pitTestAllowed));
+    operatorController
+        .back()
+        .onTrue(Commands.runOnce(this::resetMechanismEncoders, tilter, hood).onlyIf(pitTestAllowed));
   }
 
   public PitSystemCheckCmd createPitSystemCheckCommand() {

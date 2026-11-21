@@ -2474,6 +2474,65 @@ public class Tier2DeterministicSolversTest {
         "Multi-tag PHOTONVISION must keep finite floored angularStdDev");
   }
 
+  @Test
+  public void testManualShortShotFallbackEncoderZeroAndRotationCeiling() {
+    Path configDir = Paths.get("src/main/deploy/configs");
+    FluxFig fuelCfg = FluxFig.load(configDir, RobotIdentity.FUEL.name());
+    FluxFig coralCfg = FluxFig.load(configDir, RobotIdentity.CORAL.name());
+    assertEquals(
+        4.71,
+        fuelCfg.getDouble("maxAngularSpeedRadPerSec"),
+        1e-6,
+        "FUEL maxAngularSpeedRadPerSec must stay capped at safe 0.75 rot/s (4.71 rad/s)");
+    assertEquals(
+        4.71,
+        coralCfg.getDouble("maxAngularSpeedRadPerSec"),
+        1e-6,
+        "CORAL maxAngularSpeedRadPerSec must stay capped at safe 0.75 rot/s (4.71 rad/s)");
+
+    RobotContainer container = new RobotContainer(RobotIdentity.FUEL, configDir, true);
+    container.getDrive().setPose(Pose2d.kZero);
+
+    // Manual short shot must feed once shooter + hood reach tolerance even when Pose=(0,0) is out of Hub range.
+    Command manualShot = container.createManualShortShotCommand();
+    manualShot.initialize();
+    for (int i = 0; i < 120; i++) {
+      manualShot.execute();
+      container.getIntake().periodic();
+      container.getTilter().periodic();
+      container.getIndexer().periodic();
+      container.getFeeder().periodic();
+      container.getShooter().periodic();
+      container.getHood().periodic();
+      container.getSuperstructure().periodic();
+    }
+    assertEquals(Superstructure.State.SHOOTING, container.getSuperstructure().getState());
+    assertTrue(
+        container.getSuperstructure().isReadyToFire(),
+        "Manual short shot must reach ReadyToFire without AprilTag localization");
+    assertEquals(0.0, container.getIntake().getTargetVelocity(), 1e-6);
+    assertEquals(
+        Superstructure.DEFAULT_FEEDER_RPS, container.getFeeder().getTargetVelocity(), 1e-6);
+    manualShot.end(false);
+    container.resetSuperstructureToIdle();
+    assertEquals(Superstructure.State.IDLE, container.getSuperstructure().getState());
+
+    // Zeroing relative encoders at stow resets both Tilter and Hood cleanly to 0.0.
+    container.getTilter().setPosition(-5.0);
+    container.getHood().setPosition(3.0);
+    for (int i = 0; i < 30; i++) {
+      container.getTilter().periodic();
+      container.getHood().periodic();
+    }
+    assertTrue(Math.abs(container.getTilter().getPosition()) > 0.5);
+    assertTrue(Math.abs(container.getHood().getPosition()) > 0.5);
+    container.resetMechanismEncoders();
+    container.getTilter().periodic();
+    container.getHood().periodic();
+    assertEquals(0.0, container.getTilter().getPosition(), 1e-4);
+    assertEquals(0.0, container.getHood().getPosition(), 1e-4);
+  }
+
   private static void deleteTree(Path root) {
     if (root == null || !Files.exists(root)) {
       return;

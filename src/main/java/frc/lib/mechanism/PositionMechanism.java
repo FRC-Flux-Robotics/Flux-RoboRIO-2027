@@ -123,6 +123,8 @@ public class PositionMechanism extends SubsystemBase {
   }
 
   public void resetPosition() {
+    targetPosition = 0.0;
+    io.stop();
     io.resetPosition();
   }
 
