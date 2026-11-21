@@ -114,6 +114,7 @@ public final class StudentAutoSimExporter {
     FieldPositions.setCoordinateSystem(CoordinateSystem.WALL_BLUE_2026);
     SafeAutoBuilder.clearLastDiagnostic();
     try {
+      container.resetMechanismEncoders();
       drive.setPose(new Pose2d(3.10, 4.05, Rotation2d.kZero));
       superstructure.requestState(State.IDLE);
 

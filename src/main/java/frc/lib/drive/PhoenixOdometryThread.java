@@ -167,6 +167,16 @@ public final class PhoenixOdometryThread {
     }
   }
 
+  /** Returns a snapshot of all CTRE StatusSignals refreshed on the 250 Hz odometry thread. */
+  public List<BaseStatusSignal> getRegisteredSignals() {
+    ODOMETRY_LOCK.lock();
+    try {
+      return List.copyOf(allSignals);
+    } finally {
+      ODOMETRY_LOCK.unlock();
+    }
+  }
+
   /**
    * Ensures at least one 250 Hz sample is queued for the current control loop cycle when hardware
    * signals are registered.

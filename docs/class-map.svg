@@ -181,12 +181,12 @@
   <g transform="translate(24, 208)">
     <rect width="224" height="52" rx="7" fill="#254BA0" stroke="#2B7BFF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">RobotContainer</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.robot · 810L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.robot · 868L</text>
   </g>
   <g transform="translate(24, 274)">
     <rect width="224" height="52" rx="7" fill="#254BA0" stroke="#2B7BFF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">Superstructure</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.robot · 417L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.robot · 419L</text>
   </g>
   <g transform="translate(24, 340)">
     <rect width="224" height="52" rx="7" fill="#254BA0" stroke="#2B7BFF" stroke-width="1.6"/>
@@ -201,7 +201,7 @@
   <g transform="translate(24, 472)">
     <rect width="224" height="52" rx="7" fill="#254BA0" stroke="#2B7BFF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">StudentAutoRoutines</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.robot.autos · 461L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.robot.autos · 465L</text>
   </g>
   <g transform="translate(24, 538)">
     <rect width="224" height="52" rx="7" fill="#254BA0" stroke="#2B7BFF" stroke-width="1.6"/>
@@ -211,7 +211,7 @@
   <g transform="translate(24, 604)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">DriveCommands</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.commands · 215L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.commands · 216L</text>
   </g>
   <g transform="translate(24, 670)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
@@ -221,17 +221,17 @@
   <g transform="translate(24, 736)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">PreMatchCalibrator</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.commands · 162L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.commands · 175L</text>
   </g>
   <g transform="translate(24, 802)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">PitSystemCheckCmd</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.commands · 393L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.commands · 410L</text>
   </g>
   <g transform="translate(24, 868)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">HardStopHomingCmd</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.commands · 104L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.commands · 136L</text>
   </g>
   <g transform="translate(24, 934)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
@@ -251,12 +251,12 @@
   <g transform="translate(280, 76)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">Drive</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 414L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 421L</text>
   </g>
   <g transform="translate(280, 142)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">Module</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 115L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 111L</text>
   </g>
   <g transform="translate(280, 208)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
@@ -266,17 +266,17 @@
   <g transform="translate(280, 274)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">PhoenixOdometryThread</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 212L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 222L</text>
   </g>
   <g transform="translate(280, 340)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">Vision</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.vision · 347L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.vision · 418L</text>
   </g>
   <g transform="translate(280, 406)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">PositionMechanism</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.mechanism · 136L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.mechanism · 179L</text>
   </g>
   <g transform="translate(280, 472)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
@@ -291,7 +291,7 @@
   <g transform="translate(280, 604)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">FaultSupervisor</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.safety · 217L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.safety · 294L</text>
   </g>
   <g transform="translate(280, 670)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
@@ -301,17 +301,17 @@
   <g transform="translate(536, 76)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">ModuleIO</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 106L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 104L</text>
   </g>
   <g transform="translate(536, 142)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">ModuleIOTalonFX</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 384L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 375L</text>
   </g>
   <g transform="translate(536, 208)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">ModuleIOSim</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 154L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 149L</text>
   </g>
   <g transform="translate(536, 274)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
@@ -321,7 +321,7 @@
   <g transform="translate(536, 340)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">GyroIOPigeon2</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 120L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 122L</text>
   </g>
   <g transform="translate(536, 406)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
@@ -346,22 +346,22 @@
   <g transform="translate(536, 670)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">MechanismIO</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.mechanism · 64L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.mechanism · 66L</text>
   </g>
   <g transform="translate(536, 736)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">MechanismIOTalonFX</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.mechanism · 316L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.mechanism · 350L</text>
   </g>
   <g transform="translate(536, 802)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">MechanismIOSim</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.mechanism · 224L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.mechanism · 225L</text>
   </g>
   <g transform="translate(536, 868)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">BatteryIO</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.safety · 616L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.safety · 657L</text>
   </g>
   <g transform="translate(792, 76)">
     <rect width="224" height="52" rx="7" fill="#254BA0" stroke="#2B7BFF" stroke-width="1.6"/>
@@ -391,7 +391,7 @@
   <g transform="translate(792, 406)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">SafeAutoBuilder</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.util · 646L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.util · 669L</text>
   </g>
   <g transform="translate(792, 472)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
@@ -401,7 +401,7 @@
   <g transform="translate(792, 538)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">PhoenixSignals</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.util · 100L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.util · 109L</text>
   </g>
   <g transform="translate(792, 604)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>

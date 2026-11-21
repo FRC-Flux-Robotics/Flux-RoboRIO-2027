@@ -381,7 +381,8 @@ public final class StudentAutoRoutines {
               boolean inRange = shotCalculator.isInRange(sol.effectiveDistanceMeters());
               superstructure.applyShotSolution(sol, true, Math.abs(yawErrRad), inRange);
 
-              double omegaCmd = MathUtil.clamp(yawErrRad * 6.5, -6.0, 6.0);
+              double maxAngular = drive.getConfig().maxAngularSpeedRadPerSec();
+              double omegaCmd = MathUtil.clamp(yawErrRad * 6.5, -maxAngular, maxAngular);
               drive.runVelocity(new ChassisSpeeds(0.0, 0.0, omegaCmd));
               loops[0]++;
             },
@@ -431,9 +432,12 @@ public final class StudentAutoRoutines {
               boolean inRange = shotCalculator.isInRange(sol.effectiveDistanceMeters());
               superstructure.applyShotSolution(sol, true, Math.abs(yawErrRad), inRange);
 
+              double maxAngular = drive.getConfig().maxAngularSpeedRadPerSec();
               double omegaCmd =
                   MathUtil.clamp(
-                      yawErrRad * 6.5 + sol.headingFeedforwardRadPerSec(), -7.5, 7.5);
+                      yawErrRad * 6.5 + sol.headingFeedforwardRadPerSec(),
+                      -maxAngular,
+                      maxAngular);
 
               drive.runVelocity(
                   ChassisSpeeds.fromFieldRelativeSpeeds(

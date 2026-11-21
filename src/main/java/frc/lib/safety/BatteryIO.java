@@ -133,6 +133,7 @@ public class BatteryIO {
   private String nicknamePart1 = "";
   private String nicknamePart2 = "";
   private double maxAllowedRintMilliOhms = 24.0;
+  private double nominalRintMilliOhms = 16.0;
   private boolean rIntMeasuredFromStep = false;
   private double prevSampleVoltageV = Double.NaN;
   private double prevSampleCurrentA = Double.NaN;
@@ -159,6 +160,39 @@ public class BatteryIO {
     this.fluxFig = fluxFig;
     this.auxCanBus = auxCanBus;
     this.deviceId = deviceId;
+    this.nominalRintMilliOhms = computeNominalCsvRintMilliOhms(fluxFig);
+    this.inputs.internalResistanceMilliOhms = this.nominalRintMilliOhms;
+  }
+
+  private static double computeNominalCsvRintMilliOhms(FluxFig fig) {
+    if (fig == null) {
+      return 16.0;
+    }
+    double sum = 0.0;
+    int count = 0;
+    for (Map<String, String> row : fig.getTable("batteries")) {
+      String raw = row.get("nominalRintMilliOhms");
+      if (raw != null && !raw.isBlank()) {
+        try {
+          double val = Double.parseDouble(raw.trim());
+          if (Double.isFinite(val) && val > 0.0) {
+            sum += val;
+            count++;
+          }
+        } catch (NumberFormatException ignored) {
+        }
+      }
+    }
+    if (count > 0) {
+      return sum / count;
+    }
+    for (BatterySpec spec : fig.getBatteries().values()) {
+      if (Double.isFinite(spec.nominalRintMilliOhms()) && spec.nominalRintMilliOhms() > 0.0) {
+        sum += spec.nominalRintMilliOhms();
+        count++;
+      }
+    }
+    return (count > 0) ? (sum / count) : 16.0;
   }
 
   /**
@@ -478,9 +512,11 @@ public class BatteryIO {
           resolvedBatteryName = name;
           maxAllowedRintMilliOhms =
               Double.parseDouble(row.getOrDefault("maxAllowedRintMilliOhms", "24.0"));
+          double rowNominalRint =
+              Double.parseDouble(row.getOrDefault("nominalRintMilliOhms", "16.0"));
+          nominalRintMilliOhms = rowNominalRint;
           if (!rIntMeasuredFromStep) {
-            inputs.internalResistanceMilliOhms =
-                Double.parseDouble(row.getOrDefault("nominalRintMilliOhms", "16.0"));
+            inputs.internalResistanceMilliOhms = rowNominalRint;
           }
           return;
         }
@@ -588,6 +624,11 @@ public class BatteryIO {
 
   public double getInternalResistanceMilliOhms() {
     return inputs.internalResistanceMilliOhms;
+  }
+
+  /** Returns the nominal battery internal resistance (mOhm) from {@code batteries.csv}. */
+  public double getNominalRintMilliOhms() {
+    return nominalRintMilliOhms;
   }
 
   public double getConsumedChargeMah() {

@@ -33,7 +33,10 @@ import java.util.Locale;
  * and registers 50 Hz status signals with {@link PhoenixSignals}.
  */
 public class MechanismIOTalonFX implements MechanismIO, AutoCloseable {
+  public static final double PEAK_FORWARD_VOLTAGE = 11.0;
+  public static final double PEAK_REVERSE_VOLTAGE = -11.0;
 
+  private final String mechanismName;
   private final TalonFX motor;
   private final TalonFX follower;
   private final GravityTypeValue gravityType;
@@ -89,6 +92,7 @@ public class MechanismIOTalonFX implements MechanismIO, AutoCloseable {
               + "A) to prevent breaker trips and brownouts.");
     }
 
+    this.mechanismName = spec.mechanism();
     CANBus bus = new CANBus(spec.canBus());
     motor = new TalonFX(spec.motorId(), bus);
     follower = followerMotorId >= 0 ? new TalonFX(followerMotorId, bus) : null;
@@ -100,6 +104,8 @@ public class MechanismIOTalonFX implements MechanismIO, AutoCloseable {
         spec.motorInverted()
             ? InvertedValue.Clockwise_Positive
             : InvertedValue.CounterClockwise_Positive;
+    cfg.Voltage.PeakForwardVoltage = PEAK_FORWARD_VOLTAGE;
+    cfg.Voltage.PeakReverseVoltage = PEAK_REVERSE_VOLTAGE;
 
     cfg.CurrentLimits.StatorCurrentLimitEnable = true;
     cfg.CurrentLimits.StatorCurrentLimit = Math.min(spec.statorLimitAmps(), spec.slipCurrentAmps());
@@ -231,10 +237,33 @@ public class MechanismIOTalonFX implements MechanismIO, AutoCloseable {
     com.ctre.phoenix6.StatusCode status =
         PhoenixUtil.tryUntilOk(
             "Mech-ReadCfg",
-            () -> motor.getConfigurator().refresh(readback, PhoenixUtil.DEFAULT_CAN_CALL_TIMEOUT_SECONDS),
+            () ->
+                motor
+                    .getConfigurator()
+                    .refresh(readback, PhoenixUtil.DEFAULT_CAN_CALL_TIMEOUT_SECONDS),
             5);
     if (!status.isOK()) {
       throw new IllegalStateException("Failed to read back TalonFX config: " + status);
+    }
+    return readback;
+  }
+
+  /** Reads back the active follower TalonFXConfiguration registers from hardware/sim. */
+  public TalonFXConfiguration readAppliedFollowerConfig() {
+    if (follower == null) {
+      throw new IllegalStateException("Mechanism " + mechanismName + " has no follower motor");
+    }
+    TalonFXConfiguration readback = new TalonFXConfiguration();
+    com.ctre.phoenix6.StatusCode status =
+        PhoenixUtil.tryUntilOk(
+            "Mech-ReadFollowerCfg",
+            () ->
+                follower
+                    .getConfigurator()
+                    .refresh(readback, PhoenixUtil.DEFAULT_CAN_CALL_TIMEOUT_SECONDS),
+            5);
+    if (!status.isOK()) {
+      throw new IllegalStateException("Failed to read back follower TalonFX config: " + status);
     }
     return readback;
   }
@@ -284,8 +313,13 @@ public class MechanismIOTalonFX implements MechanismIO, AutoCloseable {
   }
 
   @Override
-  public void resetPosition() {
-    motor.setPosition(0.0);
+  public boolean resetPosition() {
+    com.ctre.phoenix6.StatusCode status =
+        PhoenixUtil.tryUntilOk(
+            "Mech-" + mechanismName + "-ResetPos",
+            () -> motor.setPosition(0.0, PhoenixUtil.DEFAULT_CAN_CALL_TIMEOUT_SECONDS),
+            3);
+    return status.isOK();
   }
 
   @Override

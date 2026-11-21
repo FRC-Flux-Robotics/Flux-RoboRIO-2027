@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import edu.wpi.first.hal.HAL;
+import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Rotation3d;
 import edu.wpi.first.math.geometry.Transform3d;
 import edu.wpi.first.math.geometry.Translation3d;
@@ -38,6 +40,7 @@ class Tier4ChaosMatchSimTest {
     try {
       RobotContainer container =
           new RobotContainer(RobotIdentity.FUEL, Paths.get("src/main/deploy/configs"), true);
+      container.getDrive().setPose(new Pose2d(8.2, 1.0, Rotation2d.kZero));
       FaultSupervisor supervisor = container.getFaultSupervisor();
       Path wpilogPath = Path.of("build/chaos-match-sim.wpilog");
 
@@ -50,6 +53,7 @@ class Tier4ChaosMatchSimTest {
       assertTrue(
           container.getPreMatchCalibrator().isGyroSeeded(),
           "PreMatchCalibrator must seed gyro during 60 disabled loops before match start");
+      container.resetMechanismEncoders();
 
       double weakBatteryRintOhms = 0.028; // 28 mOhm degraded competition battery
       double openCircuitVoltage = 12.4;
@@ -111,8 +115,8 @@ class Tier4ChaosMatchSimTest {
             brownoutCount++;
           }
 
-          // Step actual RobotContainer subsystems during the match simulation
-          container.getDrive().runVelocity(new ChassisSpeeds(2.5 * demandFactor, 0.0, 0.5));
+          // Step actual RobotContainer subsystems during the match simulation (circle stays inside field)
+          container.getDrive().runVelocity(new ChassisSpeeds(2.5 * demandFactor, 0.0, 0.7));
           container
               .getSuperstructure()
               .requestState((loop % 200 < 100) ? State.INTAKING : State.IDLE);

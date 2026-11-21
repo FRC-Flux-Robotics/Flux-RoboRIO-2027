@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.ctre.phoenix6.BaseStatusSignal;
 import com.ctre.phoenix6.CANBus;
 import com.ctre.phoenix6.configs.CANcoderConfiguration;
 import com.ctre.phoenix6.configs.Pigeon2Configuration;
@@ -133,12 +134,22 @@ public class Tier3CtreSimHardwareTest {
       assertEquals(60.0, readback.CurrentLimits.StatorCurrentLimit, 0.1);
       assertEquals(40.0, readback.CurrentLimits.SupplyCurrentLimit, 0.1);
       assertEquals(
+          11.0,
+          readback.Voltage.PeakForwardVoltage,
+          0.05,
+          "Mechanism leader PeakForwardVoltage must be clamped to +11.0 V");
+      assertEquals(
+          -11.0,
+          readback.Voltage.PeakReverseVoltage,
+          0.05,
+          "Mechanism leader PeakReverseVoltage must be clamped to -11.0 V");
+      assertEquals(
           NeutralModeValue.Brake,
           readback.MotorOutput.NeutralMode,
           "Non-flywheel mechanisms must default to Brake neutral mode");
     }
 
-    // Verify FUEL Shooter flywheel configures Coast neutral mode in CTRE TalonFX hardware registers
+    // Verify FUEL Shooter flywheel configures Coast neutral mode and +-11V peak on leader + follower
     MechanismSpec baseShooter = fig.getMechanismSpec("FUEL", "Shooter");
     MechanismSpec rioShooter =
         new MechanismSpec(
@@ -165,10 +176,31 @@ public class Tier3CtreSimHardwareTest {
             baseShooter.gearRatio());
     try (MechanismIOTalonFX shooterIo = new MechanismIOTalonFX(rioShooter)) {
       TalonFXConfiguration shooterReadback = shooterIo.readAppliedConfig();
+      TalonFXConfiguration followerReadback = shooterIo.readAppliedFollowerConfig();
       assertEquals(
           NeutralModeValue.Coast,
           shooterReadback.MotorOutput.NeutralMode,
           "FUEL Shooter flywheel must apply NeutralModeValue.Coast in TalonFX config");
+      assertEquals(
+          11.0,
+          shooterReadback.Voltage.PeakForwardVoltage,
+          0.05,
+          "Shooter leader PeakForwardVoltage must be +11.0 V");
+      assertEquals(
+          -11.0,
+          shooterReadback.Voltage.PeakReverseVoltage,
+          0.05,
+          "Shooter leader PeakReverseVoltage must be -11.0 V");
+      assertEquals(
+          11.0,
+          followerReadback.Voltage.PeakForwardVoltage,
+          0.05,
+          "Shooter follower PeakForwardVoltage must be +11.0 V");
+      assertEquals(
+          -11.0,
+          followerReadback.Voltage.PeakReverseVoltage,
+          0.05,
+          "Shooter follower PeakReverseVoltage must be -11.0 V");
     }
 
     // Verify that attempting the NYTR 120A SlipCurrent overwrite is caught immediately
@@ -680,6 +712,28 @@ public class Tier3CtreSimHardwareTest {
           gyroInputs.odometryYawTimestamps.length,
           gyroInputs.odometryYawPositions.length,
           "GyroIOPigeon2 odometryYawTimestamps length must match yaw position samples");
+
+      // HB-01: Assert ZERO StatusSignal objects are registered in both PhoenixSignals and
+      // PhoenixOdometryThread across all 4 swerve corners + Pigeon 2 (18 odometry signals).
+      java.util.List<BaseStatusSignal> signals50Hz = PhoenixSignals.getRegisteredSignals();
+      java.util.List<BaseStatusSignal> signals250Hz =
+          PhoenixOdometryThread.getInstance().getRegisteredSignals();
+      assertEquals(
+          18,
+          signals250Hz.size(),
+          "Expected 18 odometry signals (4 corners x 4 + Pigeon yaw/yawVel) on PhoenixOdometryThread");
+      int overlapCount = 0;
+      for (BaseStatusSignal sig50 : signals50Hz) {
+        for (BaseStatusSignal sig250 : signals250Hz) {
+          if (sig50 == sig250) {
+            overlapCount++;
+          }
+        }
+      }
+      assertEquals(
+          0,
+          overlapCount,
+          "Zero StatusSignal objects may be registered in both PhoenixSignals and PhoenixOdometryThread");
     }
   }
 

@@ -169,7 +169,7 @@
             "title": "Match Time",
             "x": 640.0,
             "y": 384.0,
-            "width": 384.0,
+            "width": 256.0,
             "height": 128.0,
             "type": "Match Time",
             "properties": {
@@ -178,6 +178,18 @@
               "time_display_mode": "Minutes and Seconds",
               "red_start_time": 15,
               "yellow_start_time": 30
+            }
+          },
+          {
+            "title": "Vision Enabled",
+            "x": 896.0,
+            "y": 384.0,
+            "width": 128.0,
+            "height": 128.0,
+            "type": "Toggle Switch",
+            "properties": {
+              "topic": "/SmartDashboard/Vision/Enabled",
+              "period": 0.033
             }
           },
           {

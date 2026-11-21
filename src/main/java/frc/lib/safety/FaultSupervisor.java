@@ -29,9 +29,15 @@ public final class FaultSupervisor {
   public static final double NOMINAL_DRIVE_STATOR_LIMIT_AMPS = 60.0;
   public static final double MIN_BROWNOUT_GUARD_STATOR_AMPS = 38.0;
   public static final double VOLTAGE_SOFT_THROTTLE_START_V = 9.6;
+  public static final double VOLTAGE_THROTTLE_RELEASE_V = 10.2;
+  public static final double VOLTAGE_EMERGENCY_SAG_V = 8.0;
   public static final double VOLTAGE_HARD_FLOOR_V = 7.4;
+  public static final double VOLTAGE_LPF_TIME_CONSTANT_SEC = 0.12;
+  public static final double VOLTAGE_SCALE_MIN_DWELL_SEC = 1.0;
+  public static final double DEFAULT_LOOP_DT_SEC = 0.020;
   public static final double CAMERA_OUTLIER_THRESHOLD_METERS = 0.08;
   public static final int CAMERA_OUTLIER_CONSECUTIVE_FRAMES = 5;
+  public static final int CAMERA_RECOVERY_CONSECUTIVE_FRAMES = 10;
   public static final double JAM_CURRENT_THRESHOLD_AMPS = 38.0;
   public static final double JAM_VELOCITY_THRESHOLD_RPS = 0.5;
   public static final int JAM_DETECT_LOOPS = 13; // 260 ms at 50 Hz
@@ -44,6 +50,7 @@ public final class FaultSupervisor {
   public static final int MAX_JAM_CHANNELS = 4;
 
   private final int[] cameraOutlierStreak;
+  private final int[] cameraRecoveryStreak;
   private final boolean[] cameraQuarantined;
   private final boolean[] steerEncoderFaulted = new boolean[4];
   private final int[] jamStallCounters = new int[MAX_JAM_CHANNELS];
@@ -53,51 +60,115 @@ public final class FaultSupervisor {
 
   private int dejamEventsTriggered = 0;
   private int tagBlackoutLoops = 0;
+  private boolean voltageFilterInitialized = false;
+  private double filteredBatteryVoltageV = 12.6;
+  private boolean voltageThrottleActive = false;
+  private double appliedVoltageScale = 1.0;
+  private double timeSinceVoltageScaleChangeSec = VOLTAGE_SCALE_MIN_DWELL_SEC;
   private double activeDriveStatorLimitAmps = NOMINAL_DRIVE_STATOR_LIMIT_AMPS;
 
   public FaultSupervisor(int cameraCount) {
     this.cameraOutlierStreak = new int[cameraCount];
+    this.cameraRecoveryStreak = new int[cameraCount];
     this.cameraQuarantined = new boolean[cameraCount];
   }
 
   /**
-   * Computes the dynamic per-module drive stator current limit (Amps) to prevent battery brownouts
-   * on weak or high-internal-resistance batteries.
+   * Computes the dynamic per-module drive stator current limit (Amps) at the nominal 50 Hz loop
+   * period to prevent battery brownouts on weak or high-internal-resistance batteries.
    */
   public double updateBatteryProtection(double batteryVoltageV, double estimatedRintMilliOhms) {
-    double rIntScale = 1.0;
-    if (estimatedRintMilliOhms > 20.0) {
-      rIntScale = Math.max(0.70, 1.0 - (estimatedRintMilliOhms - 20.0) * 0.02);
-    }
-    double voltageScale = 1.0;
-    if (batteryVoltageV < VOLTAGE_SOFT_THROTTLE_START_V) {
-      double ratio =
-          (batteryVoltageV - VOLTAGE_HARD_FLOOR_V)
-              / (VOLTAGE_SOFT_THROTTLE_START_V - VOLTAGE_HARD_FLOOR_V);
-      voltageScale = Math.max(0.60, Math.min(1.0, ratio));
-    }
-    activeDriveStatorLimitAmps =
-        Math.max(
-            MIN_BROWNOUT_GUARD_STATOR_AMPS,
-            NOMINAL_DRIVE_STATOR_LIMIT_AMPS * Math.min(rIntScale, voltageScale));
-    return activeDriveStatorLimitAmps;
+    return updateBatteryProtection(batteryVoltageV, estimatedRintMilliOhms, DEFAULT_LOOP_DT_SEC);
   }
 
   /**
-   * Audits per-camera pose estimates against consensus pose and quarantines any camera whose mount
-   * has bent by more than {@code 8.0 cm} for {@code >= 5} consecutive frames.
+   * Computes the dynamic per-module drive stator current limit (Amps) with a battery-voltage
+   * low-pass filter, hysteresis ({@code 9.6 V} engage / {@code 10.2 V} release), and a {@code 1.0
+   * s} dwell guard so brief voltage sags never cause the robot to surge.
+   */
+  public double updateBatteryProtection(
+      double batteryVoltageV, double estimatedRintMilliOhms, double dtSec) {
+    double safeDt = (Double.isFinite(dtSec) && dtSec > 0.0) ? dtSec : DEFAULT_LOOP_DT_SEC;
+    double rIntScale = 1.0;
+    if (Double.isFinite(estimatedRintMilliOhms) && estimatedRintMilliOhms > 20.0) {
+      rIntScale = Math.max(0.70, 1.0 - (estimatedRintMilliOhms - 20.0) * 0.02);
+    }
+
+    if (Double.isFinite(batteryVoltageV)) {
+      if (!voltageFilterInitialized) {
+        filteredBatteryVoltageV = batteryVoltageV;
+        voltageFilterInitialized = true;
+      } else {
+        double alpha =
+            (batteryVoltageV < VOLTAGE_EMERGENCY_SAG_V)
+                ? 0.50
+                : (safeDt / (VOLTAGE_LPF_TIME_CONSTANT_SEC + safeDt));
+        filteredBatteryVoltageV += alpha * (batteryVoltageV - filteredBatteryVoltageV);
+      }
+    }
+
+    if (!voltageThrottleActive && filteredBatteryVoltageV < VOLTAGE_SOFT_THROTTLE_START_V) {
+      voltageThrottleActive = true;
+    } else if (voltageThrottleActive && filteredBatteryVoltageV >= VOLTAGE_THROTTLE_RELEASE_V) {
+      voltageThrottleActive = false;
+    }
+
+    double targetVoltageScale = 1.0;
+    if (voltageThrottleActive) {
+      double ratio =
+          (filteredBatteryVoltageV - VOLTAGE_HARD_FLOOR_V)
+              / (VOLTAGE_SOFT_THROTTLE_START_V - VOLTAGE_HARD_FLOOR_V);
+      targetVoltageScale = Math.max(0.60, Math.min(0.95, ratio));
+    }
+
+    boolean emergencyDeepSag =
+        filteredBatteryVoltageV < VOLTAGE_EMERGENCY_SAG_V
+            && targetVoltageScale < appliedVoltageScale - 1e-6;
+    if (Math.abs(targetVoltageScale - appliedVoltageScale) > 1e-6
+        && (timeSinceVoltageScaleChangeSec >= VOLTAGE_SCALE_MIN_DWELL_SEC - 1e-9
+            || emergencyDeepSag)) {
+      appliedVoltageScale = targetVoltageScale;
+      timeSinceVoltageScaleChangeSec = 0.0;
+    } else {
+      timeSinceVoltageScaleChangeSec += safeDt;
+    }
+
+    activeDriveStatorLimitAmps =
+        Math.max(
+            MIN_BROWNOUT_GUARD_STATOR_AMPS,
+            NOMINAL_DRIVE_STATOR_LIMIT_AMPS * Math.min(rIntScale, appliedVoltageScale));
+    return activeDriveStatorLimitAmps;
+  }
+
+  public double getFilteredBatteryVoltageV() {
+    return filteredBatteryVoltageV;
+  }
+
+  /**
+   * Audits per-camera pose estimates against consensus pose, quarantining any camera whose mount
+   * diverges by more than {@code 8.0 cm} for {@code >= 5} consecutive frames and un-quarantining
+   * once it agrees with consensus for {@link #CAMERA_RECOVERY_CONSECUTIVE_FRAMES} consecutive good
+   * frames.
    */
   public void auditCameraDiscrepancy(int camIndex, double discrepancyMeters) {
     if (camIndex < 0 || camIndex >= cameraQuarantined.length) {
       return;
     }
     if (discrepancyMeters > CAMERA_OUTLIER_THRESHOLD_METERS) {
+      cameraRecoveryStreak[camIndex] = 0;
       cameraOutlierStreak[camIndex]++;
       if (cameraOutlierStreak[camIndex] >= CAMERA_OUTLIER_CONSECUTIVE_FRAMES) {
         cameraQuarantined[camIndex] = true;
       }
     } else {
       cameraOutlierStreak[camIndex] = 0;
+      if (cameraQuarantined[camIndex]) {
+        cameraRecoveryStreak[camIndex]++;
+        if (cameraRecoveryStreak[camIndex] >= CAMERA_RECOVERY_CONSECUTIVE_FRAMES) {
+          cameraQuarantined[camIndex] = false;
+          cameraRecoveryStreak[camIndex] = 0;
+        }
+      }
     }
   }
 
@@ -204,6 +275,7 @@ public final class FaultSupervisor {
 
   public void reset() {
     Arrays.fill(cameraOutlierStreak, 0);
+    Arrays.fill(cameraRecoveryStreak, 0);
     Arrays.fill(cameraQuarantined, false);
     Arrays.fill(steerEncoderFaulted, false);
     Arrays.fill(jamStallCounters, 0);
@@ -212,6 +284,11 @@ public final class FaultSupervisor {
     Arrays.fill(channelDejamEvents, 0);
     dejamEventsTriggered = 0;
     tagBlackoutLoops = 0;
+    voltageFilterInitialized = false;
+    filteredBatteryVoltageV = 12.6;
+    voltageThrottleActive = false;
+    appliedVoltageScale = 1.0;
+    timeSinceVoltageScaleChangeSec = VOLTAGE_SCALE_MIN_DWELL_SEC;
     activeDriveStatorLimitAmps = NOMINAL_DRIVE_STATOR_LIMIT_AMPS;
   }
 }

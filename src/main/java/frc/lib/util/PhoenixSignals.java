@@ -90,6 +90,15 @@ public final class PhoenixSignals {
     return count;
   }
 
+  /** Returns a snapshot of all StatusSignals registered for 50 Hz batch refresh. */
+  public static List<BaseStatusSignal> getRegisteredSignals() {
+    List<BaseStatusSignal> out = new ArrayList<>();
+    for (List<BaseStatusSignal> signals : busBuckets.values()) {
+      out.addAll(signals);
+    }
+    return List.copyOf(out);
+  }
+
   public static void reset() {
     nextGroupId = 0;
     busBuckets.clear();

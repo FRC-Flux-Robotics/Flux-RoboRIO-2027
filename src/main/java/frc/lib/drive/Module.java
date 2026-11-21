@@ -57,10 +57,6 @@ public class Module {
     io.setTurnPosition(state.angle);
   }
 
-  public void setDriveStatorCurrentLimit(double statorLimitAmps) {
-    io.setDriveStatorCurrentLimit(statorLimitAmps);
-  }
-
   public void stop() {
     io.stop();
   }

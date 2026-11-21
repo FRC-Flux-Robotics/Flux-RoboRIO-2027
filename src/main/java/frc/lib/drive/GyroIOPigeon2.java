@@ -44,10 +44,10 @@ public class GyroIOPigeon2 implements GyroIO, AutoCloseable {
     pitch = pigeon.getPitch();
     supplyVoltage = pigeon.getSupplyVoltage();
 
-    BaseStatusSignal.setUpdateFrequencyForAll(50.0, yawVelocity, roll, pitch, supplyVoltage);
+    BaseStatusSignal.setUpdateFrequencyForAll(50.0, roll, pitch, supplyVoltage);
 
-    signalGroup =
-        PhoenixSignals.register(canBusName, yaw, yawVelocity, roll, pitch, supplyVoltage);
+    // Yaw and yawVelocity are owned exclusively by 250 Hz PhoenixOdometryThread under ODOMETRY_LOCK.
+    signalGroup = PhoenixSignals.register(canBusName, roll, pitch, supplyVoltage);
     PhoenixOdometryThread odomThread = PhoenixOdometryThread.getInstance();
     yawTimestampQueue = odomThread.makeTimestampQueue();
     yawPositionQueue = odomThread.registerLatencyCompensatedSignal(yaw, yawVelocity);
@@ -76,24 +76,26 @@ public class GyroIOPigeon2 implements GyroIO, AutoCloseable {
 
   @Override
   public void updateInputs(GyroIOInputs inputs) {
-    boolean canOk = PhoenixSignals.isOK(signalGroup);
-    inputs.connected = canOk;
-
-    if (canOk || !hasOnboardImuFallback) {
-      inputs.usingOnboardFallback = false;
-      inputs.yawPosition = Rotation2d.fromDegrees(yaw.getValueAsDouble());
-      inputs.yawVelocityRadPerSec = Units.degreesToRadians(yawVelocity.getValueAsDouble());
-      inputs.rollRad = Units.degreesToRadians(roll.getValueAsDouble());
-      inputs.pitchRad = Units.degreesToRadians(pitch.getValueAsDouble());
-      inputs.supplyVoltageV = supplyVoltage.getValueAsDouble();
-    } else {
-      inputs.usingOnboardFallback = true;
-      inputs.yawPosition = new Rotation2d(fallbackYawRad);
-      inputs.yawVelocityRadPerSec = fallbackYawRateRadPerSec;
-    }
+    boolean telemetryOk = PhoenixSignals.isOK(signalGroup);
 
     PhoenixOdometryThread.ODOMETRY_LOCK.lock();
     try {
+      boolean canOk = telemetryOk && yaw.getStatus().isOK() && yawVelocity.getStatus().isOK();
+      inputs.connected = canOk;
+
+      if (canOk || !hasOnboardImuFallback) {
+        inputs.usingOnboardFallback = false;
+        inputs.yawPosition = Rotation2d.fromDegrees(yaw.getValueAsDouble());
+        inputs.yawVelocityRadPerSec = Units.degreesToRadians(yawVelocity.getValueAsDouble());
+        inputs.rollRad = Units.degreesToRadians(roll.getValueAsDouble());
+        inputs.pitchRad = Units.degreesToRadians(pitch.getValueAsDouble());
+        inputs.supplyVoltageV = supplyVoltage.getValueAsDouble();
+      } else {
+        inputs.usingOnboardFallback = true;
+        inputs.yawPosition = new Rotation2d(fallbackYawRad);
+        inputs.yawVelocityRadPerSec = fallbackYawRateRadPerSec;
+      }
+
       int nTs = yawTimestampQueue.size();
       inputs.odometryYawTimestamps = new double[nTs];
       for (int i = 0; i < nTs; i++) {

@@ -5,6 +5,7 @@ import com.pathplanner.lib.config.ModuleConfig;
 import com.pathplanner.lib.config.PIDConstants;
 import com.pathplanner.lib.config.RobotConfig;
 import com.pathplanner.lib.controllers.PPHolonomicDriveController;
+import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.Matrix;
 import edu.wpi.first.math.VecBuilder;
 import edu.wpi.first.math.estimator.SwerveDrivePoseEstimator;
@@ -59,6 +60,7 @@ public class Drive extends SubsystemBase {
   private double brownoutDemandScale = 1.0;
   private int totalOdometrySamplesIntegrated = 0;
   private double lastVisionTimestampSec = -1.0;
+  private ChassisSpeeds lastCommandedSpeeds = new ChassisSpeeds();
 
   public Drive(SwerveConfig config, GyroIO gyroIo, ModuleIO... moduleIos) {
     if (moduleIos.length != 4) {
@@ -123,7 +125,8 @@ public class Drive extends SubsystemBase {
         this::getLoopPeriodSeconds,
         this::getPose,
         this::getChassisSpeeds,
-        this::runVelocity);
+        this::runVelocity,
+        config.maxAngularSpeedRadPerSec());
   }
 
   public Optional<Pose2d> getPathStartingPose(String pathName) {
@@ -194,12 +197,15 @@ public class Drive extends SubsystemBase {
   }
 
   public void runVelocity(ChassisSpeeds speeds) {
+    double maxAngular = config.maxAngularSpeedRadPerSec();
+    double clampedOmega = MathUtil.clamp(speeds.omegaRadiansPerSecond, -maxAngular, maxAngular);
     double effectiveScale = maxAccelScale * brownoutDemandScale;
     ChassisSpeeds scaled =
         new ChassisSpeeds(
             speeds.vxMetersPerSecond * effectiveScale,
             speeds.vyMetersPerSecond * effectiveScale,
-            speeds.omegaRadiansPerSecond * effectiveScale);
+            clampedOmega * effectiveScale);
+    lastCommandedSpeeds = scaled;
     ChassisSpeeds discreteSpeeds = ChassisSpeeds.discretize(scaled, loopPeriodSec);
     SwerveModuleState[] setpointStates = kinematics.toSwerveModuleStates(discreteSpeeds);
     SwerveDriveKinematics.desaturateWheelSpeeds(setpointStates, config.maxLinearSpeedMps());
@@ -208,6 +214,10 @@ public class Drive extends SubsystemBase {
       modules[i].runSetpoint(setpointStates[i]);
     }
     Logger.recordOutput("Drive/Setpoints", setpointStates);
+  }
+
+  public ChassisSpeeds getLastCommandedSpeeds() {
+    return lastCommandedSpeeds;
   }
 
   /**
@@ -262,9 +272,6 @@ public class Drive extends SubsystemBase {
     double limitAmps = supervisor.activeDriveStatorLimitAmps();
     double nominalStatorAmps = Math.max(20.0, config.driveStatorLimitAmps());
     brownoutDemandScale = Math.max(0.58, Math.min(1.0, limitAmps / nominalStatorAmps));
-    for (Module m : modules) {
-      m.setDriveStatorCurrentLimit(limitAmps);
-    }
     Logger.recordOutput("Drive/ActiveStatorLimitAmps", limitAmps);
     Logger.recordOutput("Drive/BrownoutDemandScale", brownoutDemandScale);
   }

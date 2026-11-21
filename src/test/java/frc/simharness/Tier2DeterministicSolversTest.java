@@ -327,6 +327,7 @@ public class Tier2DeterministicSolversTest {
         fuelContainer.getOperatingMode(),
         "FMS lock must force OperatingMode back to COMPETITION");
     fuelContainer.getFluxFig().lockProductionOnFms(false);
+    fuelContainer.resetMechanismEncoders();
     Superstructure ss = fuelContainer.getSuperstructure();
     assertEquals(State.IDLE, ss.getState());
 
@@ -535,6 +536,8 @@ public class Tier2DeterministicSolversTest {
         new VelocityMechanism(new MechanismIOSim(shooterSpec), shooterSpec);
     PositionMechanism hood = new PositionMechanism(new MechanismIOSim(hoodSpec), hoodSpec);
     PositionMechanism tilter = new PositionMechanism(new MechanismIOSim(tilterSpec), tilterSpec);
+    hood.resetPosition();
+    tilter.resetPosition();
 
     flywheel.setVelocity(60.0);
     hood.setPosition(3.5);
@@ -636,9 +639,9 @@ public class Tier2DeterministicSolversTest {
     assertTrue(calibrator.isReadyToPlay());
 
     HardStopHomingCmd homingCmd =
-        new HardStopHomingCmd(fuelContainer.getHood(), -2.0, 0.0, 50.0, 2, 10);
+        new HardStopHomingCmd(fuelContainer.getHood(), -2.0, 0.0, 50.0, 2, 20);
     homingCmd.initialize();
-    for (int i = 0; i < 5 && !homingCmd.isFinished(); i++) {
+    for (int i = 0; i < 15 && !homingCmd.isFinished(); i++) {
       homingCmd.execute();
       fuelContainer.getHood().periodic();
     }
@@ -664,12 +667,13 @@ public class Tier2DeterministicSolversTest {
     assertEquals(24.5, Math.toDegrees(fullBootstrap.getSolvedExtrinsics().yawRad()), 1.5);
     assertTrue(Files.exists(calCsvPath) && Files.exists(shopJsonPath));
 
+    fuelContainer.resetMechanismEncoders();
     drive.setPose(new Pose2d(0.0, 0.0, Rotation2d.kZero));
     Path checkpointFile = Path.of("build/test-blitz-progress.json");
     Files.deleteIfExists(checkpointFile);
     PitSystemCheckCmd pitCheck = fuelContainer.createPitSystemCheckCommand();
     HardStopHomingCmd blitzHoming =
-        new HardStopHomingCmd(fuelContainer.getHood(), -2.0, 0.0, 50.0, 2, 10);
+        new HardStopHomingCmd(fuelContainer.getHood(), -2.0, 0.0, 50.0, 2, 20);
     ZeroPriorBootstrapCmd blitzBootstrap = new ZeroPriorBootstrapCmd(drive, () -> true);
     blitzBootstrap.setCurrentCameraResidualMeters(0.010);
     ShopStressSuiteCmd stressSuite = new ShopStressSuiteCmd(drive, () -> true);
@@ -1278,6 +1282,7 @@ public class Tier2DeterministicSolversTest {
     // Heading-gated and range-gated fire interlock on FUEL Superstructure
     RobotContainer fuelContainer =
         new RobotContainer(RobotIdentity.FUEL, Paths.get("src/main/deploy/configs"), true);
+    fuelContainer.resetMechanismEncoders();
     Superstructure ss = fuelContainer.getSuperstructure();
     ShotCalculator calc = fuelContainer.getShotCalculator();
     ShotSolution validSol =
@@ -1462,6 +1467,7 @@ public class Tier2DeterministicSolversTest {
       DriverStationSim.setEnabled(true);
       DriverStationSim.notifyNewData();
       XboxControllerSim opSim = new XboxControllerSim(1);
+      opSim.setPOV(-1);
       opSim.setLeftBumperButton(true);
       opSim.notifyNewData();
       DriverStationSim.notifyNewData();
@@ -1482,6 +1488,7 @@ public class Tier2DeterministicSolversTest {
           "Releasing LB while Disabled must trigger .ignoringDisable(true) IDLE reset");
     } finally {
       CommandScheduler.getInstance().cancelAll();
+      CommandScheduler.getInstance().getDefaultButtonLoop().clear();
       DriverStationSim.setFmsAttached(false);
       DriverStationSim.setTest(false);
       DriverStationSim.setEnabled(false);
@@ -1500,6 +1507,7 @@ public class Tier2DeterministicSolversTest {
     FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
     RobotContainer container =
         new RobotContainer(RobotIdentity.FUEL, Paths.get("src/main/deploy/configs"), true);
+    container.resetMechanismEncoders();
 
     PitSystemCheckCmd prodPit = container.createPitSystemCheckCommand();
     assertTrue(
@@ -1750,6 +1758,7 @@ public class Tier2DeterministicSolversTest {
   public void testShootingStopsIntake() {
     RobotContainer container =
         new RobotContainer(RobotIdentity.FUEL, Paths.get("src/main/deploy/configs"), true);
+    container.resetMechanismEncoders();
     Superstructure ss = container.getSuperstructure();
 
     ss.requestState(State.INTAKING);
@@ -1828,6 +1837,8 @@ public class Tier2DeterministicSolversTest {
         new VelocityMechanism(readyShooterIo, fig.getMechanismSpec("FUEL", "Shooter"));
     PositionMechanism hood =
         new PositionMechanism(readyHoodIo, fig.getMechanismSpec("FUEL", "Hood"), 0.15);
+    tilter.resetPosition();
+    hood.resetPosition();
 
     Superstructure ss = new Superstructure(intake, tilter, indexer, feeder, shooter, hood, sup);
     ShotSolution sol =
@@ -2491,6 +2502,7 @@ public class Tier2DeterministicSolversTest {
         "CORAL maxAngularSpeedRadPerSec must stay capped at safe 0.75 rot/s (4.71 rad/s)");
 
     RobotContainer container = new RobotContainer(RobotIdentity.FUEL, configDir, true);
+    container.resetMechanismEncoders();
     container.getDrive().setPose(Pose2d.kZero);
 
     // Manual short shot must feed once shooter + hood reach tolerance even when Pose=(0,0) is out of Hub range.
@@ -2531,6 +2543,820 @@ public class Tier2DeterministicSolversTest {
     container.getHood().periodic();
     assertEquals(0.0, container.getTilter().getPosition(), 1e-4);
     assertEquals(0.0, container.getHood().getPosition(), 1e-4);
+  }
+
+  @Test
+  public void testPositionMechanismStaysNeutralUntilZeroConfirmed() {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    MechanismSpec tilterSpec = fig.getMechanismSpec("FUEL", "Tilter");
+    double[] posRot = {-2.0};
+    int[] positionCmdCount = {0};
+    int[] stopCount = {0};
+    double[] lastPositionCmd = {Double.NaN};
+    MechanismIO spyTilterIo =
+        new MechanismIO() {
+          @Override
+          public void updateInputs(MechanismIOInputs inputs) {
+            inputs.motorConnected = true;
+            inputs.positionRotations = posRot[0];
+          }
+
+          @Override
+          public void setPosition(double positionRotations) {
+            positionCmdCount[0]++;
+            lastPositionCmd[0] = positionRotations;
+          }
+
+          @Override
+          public void stop() {
+            stopCount[0]++;
+          }
+
+          @Override
+          public boolean resetPosition() {
+            posRot[0] = 0.0;
+            return true;
+          }
+        };
+
+    PositionMechanism tilter = new PositionMechanism(spyTilterIo, tilterSpec);
+    tilter.periodic();
+    assertFalse(tilter.isZeroConfirmed(), "ZeroConfirmed must start false on boot");
+    assertEquals(-2.0, tilter.getPosition(), 1e-6);
+
+    // Enabling and commanding stow (0.0) or deploy (-17.0) must keep motor neutral until re-zeroed
+    tilter.setPosition(0.0);
+    tilter.setPosition(-17.0);
+    assertEquals(
+        0,
+        positionCmdCount[0],
+        "Un-zeroed PositionMechanism must send zero position commands to motor");
+    assertTrue(stopCount[0] >= 2, "Un-zeroed setPosition() must keep motor neutral via stop()");
+    assertFalse(tilter.atTarget(), "Un-zeroed PositionMechanism must never report atTarget()");
+
+    // After resetPosition(), zero is confirmed and position commands execute normally
+    assertTrue(tilter.resetPosition());
+    tilter.periodic();
+    assertTrue(tilter.isZeroConfirmed(), "ZeroConfirmed must become true after resetPosition()");
+    assertEquals(0.0, tilter.getPosition(), 1e-6);
+
+    tilter.setPosition(-5.0);
+    assertEquals(1, positionCmdCount[0], "Zeroed PositionMechanism must forward setPosition()");
+    assertEquals(-5.0, lastPositionCmd[0], 1e-6);
+  }
+
+  @Test
+  public void testTeleopOperatorBackReZeroAndDpadManualJog() throws Exception {
+    Path tmpDir = Files.createTempDirectory("flux-cmp-c03-test");
+    String prevLogDir = System.getProperty("flux.logDir");
+    System.setProperty("flux.logDir", tmpDir.resolve("logs").toString());
+    try (Robot robot = new Robot(tmpDir.resolve("flux-robot-state"))) {
+      DriverStationSim.setFmsAttached(false);
+      DriverStationSim.setAutonomous(false);
+      DriverStationSim.setTest(false);
+      DriverStationSim.setEnabled(false);
+      DriverStationSim.notifyNewData();
+
+      robot.robotInit();
+      RobotContainer container = robot.getRobotContainer();
+      assertFalse(container.getTilter().isZeroConfirmed());
+      assertFalse(container.getHood().isZeroConfirmed());
+
+      // Enter Teleop (NOT Test mode)
+      DriverStationSim.setTest(false);
+      DriverStationSim.setEnabled(true);
+      DriverStationSim.notifyNewData();
+      robot.teleopInit();
+      robot.robotPeriodic();
+
+      XboxControllerSim opSim = new XboxControllerSim(1);
+      opSim.setPOV(-1);
+      opSim.setBackButton(false);
+      opSim.notifyNewData();
+      DriverStationSim.notifyNewData();
+      robot.robotPeriodic();
+
+      // Operator Back re-zero must work in Teleop
+      opSim.setBackButton(true);
+      opSim.notifyNewData();
+      DriverStationSim.notifyNewData();
+      robot.robotPeriodic();
+      assertTrue(
+          container.getTilter().isZeroConfirmed(),
+          "Operator Back must re-zero Tilter in Teleop (not restricted to Test mode)");
+      assertTrue(
+          container.getHood().isZeroConfirmed(),
+          "Operator Back must re-zero Hood in Teleop (not restricted to Test mode)");
+
+      opSim.setBackButton(false);
+      opSim.notifyNewData();
+      DriverStationSim.notifyNewData();
+      robot.robotPeriodic();
+
+      // Operator D-pad Up jogs Hood positive in Teleop and stops on release
+      opSim.setPOV(0);
+      opSim.notifyNewData();
+      DriverStationSim.notifyNewData();
+      for (int i = 0; i < 8; i++) {
+        robot.robotPeriodic();
+      }
+      assertTrue(
+          container.getHood().getPosition() > 0.05,
+          "Operator POV Up must jog Hood positively in Teleop (pos="
+              + container.getHood().getPosition()
+              + ")");
+
+      opSim.setPOV(-1);
+      opSim.notifyNewData();
+      DriverStationSim.notifyNewData();
+      robot.robotPeriodic();
+      robot.robotPeriodic();
+      assertEquals(
+          0.0,
+          container.getHood().getAppliedVoltage(),
+          1e-4,
+          "Releasing Operator POV must immediately stop Hood jog voltage");
+
+      // Operator D-pad Left jogs Tilter negative (deploy direction) in Teleop and stops on release
+      opSim.setPOV(270);
+      opSim.notifyNewData();
+      DriverStationSim.notifyNewData();
+      for (int i = 0; i < 8; i++) {
+        robot.robotPeriodic();
+      }
+      assertTrue(
+          container.getTilter().getPosition() < -0.05,
+          "Operator POV Left must jog Tilter negatively in Teleop (pos="
+              + container.getTilter().getPosition()
+              + ")");
+
+      opSim.setPOV(-1);
+      opSim.notifyNewData();
+      DriverStationSim.notifyNewData();
+      robot.robotPeriodic();
+      robot.robotPeriodic();
+      assertEquals(
+          0.0,
+          container.getTilter().getAppliedVoltage(),
+          1e-4,
+          "Releasing Operator POV must immediately stop Tilter jog voltage");
+    } finally {
+      CommandScheduler.getInstance().cancelAll();
+      CommandScheduler.getInstance().getDefaultButtonLoop().clear();
+      DriverStationSim.setFmsAttached(false);
+      DriverStationSim.setTest(false);
+      DriverStationSim.setEnabled(false);
+      DriverStationSim.notifyNewData();
+      if (prevLogDir == null) {
+        System.clearProperty("flux.logDir");
+      } else {
+        System.setProperty("flux.logDir", prevLogDir);
+      }
+      deleteTree(tmpDir);
+    }
+  }
+
+  @Test
+  public void testVisionEnableToggleStopsConsumerWhileUpdatingInputs() {
+    CameraSpec camSpec = new CameraSpec("FUEL", "OV9281-2", 0, 0.2, 0.0, 0.5, 0.0, -10.0, 0.0, 1.0);
+    int[] updateCalls = {0};
+    int[] consumerCalls = {0};
+    VisionIO stubIo =
+        new VisionIO() {
+          @Override
+          public void updateInputs(VisionIOInputs inputs) {
+            updateCalls[0]++;
+            inputs.connected = true;
+            inputs.framesDrainedThisCycle = 1;
+            inputs.tagIds = new int[] {7, 8};
+            inputs.poseObservations =
+                new PoseObservation[] {
+                  new PoseObservation(
+                      Timer.getFPGATimestamp(),
+                      new Pose3d(3.0, 4.0, 0.0, Rotation3d.kZero),
+                      0.0,
+                      2,
+                      2.0,
+                      ObservationType.MEGATAG_1)
+                };
+          }
+        };
+
+    Vision vision =
+        new Vision(
+            (pose, ts, stdDevs) -> consumerCalls[0]++,
+            new FaultSupervisor(1),
+            new CameraSpec[] {camSpec},
+            stubIo);
+    assertTrue(vision.isVisionEnabled(), "Vision must default to enabled (true)");
+
+    vision.periodic();
+    assertEquals(1, updateCalls[0]);
+    assertEquals(1, consumerCalls[0]);
+
+    // Switch vision off: camera inputs must still update, consumer gets ZERO further calls
+    vision.setVisionEnabled(false);
+    assertFalse(vision.isVisionEnabled());
+    for (int i = 0; i < 5; i++) {
+      vision.periodic();
+    }
+    assertEquals(6, updateCalls[0], "Camera VisionIO.updateInputs must keep updating when disabled");
+    assertEquals(6, vision.getTotalFramesDrained(), "Camera frames must keep logging when disabled");
+    assertEquals(
+        1,
+        consumerCalls[0],
+        "Vision consumer must receive ZERO further calls after Vision/Enabled is turned off");
+    assertTrue(
+        vision.getLatestYawTrustedPose().isEmpty(),
+        "Disabled vision must not expose poses to PreMatchCalibrator");
+
+    // Re-enable for cleanup
+    vision.setVisionEnabled(true);
+  }
+
+  @Test
+  public void testSafeDefaultAutoDoesNothingAndPreservesNonOriginPose() {
+    Path configDir = Paths.get("src/main/deploy/configs");
+    RobotContainer container = new RobotContainer(RobotIdentity.FUEL, configDir, true);
+    Drive drive = container.getDrive();
+
+    Pose2d startPose = new Pose2d(5.25, 3.10, Rotation2d.fromDegrees(42.0));
+    drive.setPose(startPose);
+
+    Command defaultAuto = container.getAutonomousCommand();
+    assertEquals(RobotContainer.SAFE_DEFAULT_AUTO_NAME, defaultAuto.getName());
+
+    defaultAuto.initialize();
+    for (int i = 0; i < 20; i++) {
+      if (!defaultAuto.isFinished()) {
+        defaultAuto.execute();
+      }
+      drive.periodic();
+    }
+    defaultAuto.end(false);
+
+    Pose2d afterPose = drive.getPose();
+    assertEquals(startPose.getX(), afterPose.getX(), 1e-4, "Safe default auto must not reset X");
+    assertEquals(startPose.getY(), afterPose.getY(), 1e-4, "Safe default auto must not reset Y");
+    assertEquals(
+        startPose.getRotation().getDegrees(),
+        afterPose.getRotation().getDegrees(),
+        1e-3,
+        "Safe default auto must not reset heading");
+    assertEquals(
+        0.0,
+        Math.hypot(
+            drive.getChassisSpeeds().vxMetersPerSecond,
+            drive.getChassisSpeeds().vyMetersPerSecond),
+        1e-4,
+        "Safe default auto must command zero linear drive output");
+    assertEquals(
+        0.0,
+        drive.getChassisSpeeds().omegaRadiansPerSecond,
+        1e-4,
+        "Safe default auto must command zero angular drive output");
+
+    // Empty renderAuto selector still resolves to the student starter routine
+    Command renderDefault = container.resolveAutonomousCommand("");
+    assertEquals(StudentAutoRoutines.DEFAULT_STUDENT_AUTO_NAME, renderDefault.getName());
+  }
+
+  @Test
+  public void testRealRobotWeakBatteryRintStillDerates() {
+    Path configDir = Paths.get("src/main/deploy/configs");
+    RobotContainer container = new RobotContainer(RobotIdentity.FUEL, configDir, true);
+    BatteryIO batIo = container.getBatteryIo();
+
+    // Absent gauge: falls back to nominal batteries.csv R_int (~15.875 mOhm)
+    assertFalse(batIo.isConnected());
+    double absentRint =
+        RobotContainer.selectEffectiveRintMilliOhms(
+            batIo.isConnected(),
+            batIo.getInternalResistanceMilliOhms(),
+            batIo.getNominalRintMilliOhms());
+    assertTrue(
+        absentRint >= 15.0 && absentRint <= 17.0,
+        "Absent BFG must use nominal batteries.csv R_int (got " + absentRint + " mOhm)");
+
+    // Connected weak battery (> 22 mOhm, < 75% SoC -> isHealthy() == false): MUST still derate!
+    batIo.simulateCanReading("FLUX-BAT-2026-B01", 12.1, 55.0, 70.0, 30.0);
+    assertTrue(batIo.isConnected());
+    assertFalse(batIo.isHealthy(), "Weak battery (30 mOhm, 55% SoC) must report unhealthy");
+
+    double weakRint =
+        RobotContainer.selectEffectiveRintMilliOhms(
+            batIo.isConnected(),
+            batIo.getInternalResistanceMilliOhms(),
+            batIo.getNominalRintMilliOhms());
+    assertEquals(
+        30.0,
+        weakRint,
+        1e-6,
+        "Connected weak battery must feed its real 30 mOhm R_int even when isHealthy() is false");
+
+    double statorLimitA = container.getFaultSupervisor().updateBatteryProtection(12.1, weakRint);
+    container.getDrive().applyBatteryProtection(container.getFaultSupervisor());
+    assertTrue(
+        statorLimitA < FaultSupervisor.NOMINAL_DRIVE_STATOR_LIMIT_AMPS,
+        "Weak 30 mOhm battery must derate drive stator limit below 60 A (got " + statorLimitA + ")");
+    assertTrue(
+        container.getDrive().getBrownoutDemandScale() < 1.0,
+        "Weak 30 mOhm battery must derate Drive/BrownoutDemandScale below 1.0 (got "
+            + container.getDrive().getBrownoutDemandScale()
+            + ")");
+  }
+
+  @Test
+  public void testBatteryVoltageStepHysteresisChangesScaleAtMostOncePerSecond() {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    SwerveConfig cfg = SwerveConfig.fromFluxFig(fig, "FUEL");
+    Drive drive =
+        new Drive(
+            cfg,
+            new GyroIO() {},
+            new ModuleIOSim(cfg),
+            new ModuleIOSim(cfg),
+            new ModuleIOSim(cfg),
+            new ModuleIOSim(cfg));
+    FaultSupervisor sup = new FaultSupervisor(3);
+
+    // Step voltage across 9.6 V every 0.20 s (10 loops) over 3.0 seconds (150 loops @ 20 ms)
+    int scaleChanges = 0;
+    double prevScale = drive.getBrownoutDemandScale();
+    for (int loop = 0; loop < 150; loop++) {
+      double vBat = ((loop / 10) % 2 == 0) ? 9.1 : 10.6;
+      sup.updateBatteryProtection(vBat, 16.0, 0.020);
+      drive.applyBatteryProtection(sup);
+      double scale = drive.getBrownoutDemandScale();
+      if (Math.abs(scale - prevScale) > 1e-6) {
+        scaleChanges++;
+        prevScale = scale;
+      }
+    }
+    assertTrue(
+        scaleChanges >= 1 && scaleChanges <= 3,
+        "Stepping battery voltage across 9.6 V over 3.0 s must change scale at most once/sec (got "
+            + scaleChanges
+            + " changes)");
+
+    // Shallow jitter between 9.4 V and 9.8 V stays inside hysteresis band (9.6..10.2 V) with no surge
+    sup.reset();
+    int hysteresisChanges = 0;
+    double lastScale = 1.0;
+    for (int loop = 0; loop < 150; loop++) {
+      double vBat = ((loop / 5) % 2 == 0) ? 9.3 : 9.8;
+      sup.updateBatteryProtection(vBat, 16.0, 0.020);
+      drive.applyBatteryProtection(sup);
+      double scale = drive.getBrownoutDemandScale();
+      if (Math.abs(scale - lastScale) > 1e-6) {
+        hysteresisChanges++;
+        lastScale = scale;
+      }
+    }
+    assertTrue(
+        hysteresisChanges <= 3,
+        "Jitter across 9.6 V inside hysteresis band must stay damped <= 1/sec (got "
+            + hysteresisChanges
+            + ")");
+  }
+
+  @Test
+  public void testManualShortShotUses2026ShortValues() {
+    assertEquals(33.33, Superstructure.DEFAULT_SHORT_SHOOTER_RPS, 1e-6);
+    assertEquals(0.0, Superstructure.DEFAULT_SHORT_HOOD_ROT, 1e-6);
+    assertEquals(12.5, Superstructure.HOOD_MAX_ROT, 1e-6);
+
+    RobotContainer container =
+        new RobotContainer(RobotIdentity.FUEL, Paths.get("src/main/deploy/configs"), true);
+    container.resetMechanismEncoders();
+    Command manualShort = container.createManualShortShotCommand();
+    manualShort.initialize();
+    manualShort.execute();
+    assertEquals(
+        33.33,
+        container.getShooter().getTargetVelocity(),
+        1e-4,
+        "Manual short shot must target 33.33 RPS");
+    assertEquals(
+        0.0,
+        container.getHood().getTargetPosition(),
+        1e-4,
+        "Manual short shot must target 0.0 hood rotations");
+    manualShort.end(false);
+  }
+
+  @Test
+  public void testThreeCameraConsensusQuarantinesOnlyBentCameraAndRecovers() {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    CameraSpec[] cams = fig.getCamerasForRobot("FUEL").toArray(new CameraSpec[0]);
+    assertEquals(3, cams.length);
+
+    FaultSupervisor sup = new FaultSupervisor(3);
+    Pose2d truePose = new Pose2d(4.0, 4.0, Rotation2d.kZero);
+    VisionIOSim[] ios = new VisionIOSim[3];
+    for (int i = 0; i < 3; i++) {
+      ios[i] = new VisionIOSim(cams[i], () -> truePose);
+      ios[i].setFramesPerCycle(1);
+    }
+    Vision vision = new Vision((pose, ts, std) -> {}, sup, cams, ios);
+
+    // Offset camera #1 by +20 cm: ONLY camera #1 may be quarantined; healthy cameras #0 & #2 stay clear
+    ios[1].setMountErrorPerturbation(
+        new Transform3d(new Translation3d(0.20, 0.0, 0.0), Rotation3d.kZero));
+    for (int loop = 0; loop < FaultSupervisor.CAMERA_OUTLIER_CONSECUTIVE_FRAMES + 3; loop++) {
+      vision.periodic();
+    }
+    assertTrue(sup.isCameraQuarantined(1), "Bent camera #1 (+20 cm) must be quarantined");
+    assertFalse(
+        sup.isCameraQuarantined(0),
+        "Healthy camera #0 must NOT be quarantined by single bent camera #1");
+    assertFalse(
+        sup.isCameraQuarantined(2),
+        "Healthy camera #2 must NOT be quarantined by single bent camera #1");
+
+    // Realign camera #1: after consecutive agreeing frames it must un-quarantine cleanly
+    ios[1].setMountErrorPerturbation(new Transform3d());
+    for (int loop = 0; loop < FaultSupervisor.CAMERA_RECOVERY_CONSECUTIVE_FRAMES + 2; loop++) {
+      vision.periodic();
+    }
+    assertFalse(
+        sup.isCameraQuarantined(1),
+        "Realigned camera #1 must recover from quarantine after consecutive good frames");
+    assertFalse(sup.isCameraQuarantined(0));
+    assertFalse(sup.isCameraQuarantined(2));
+
+    // Rejected high-ambiguity frame must never poison latestCameraPose or trigger false quarantine
+    VisionIO[] rejectedTestIos = new VisionIO[3];
+    for (int i = 0; i < 3; i++) {
+      final int camIdx = i;
+      rejectedTestIos[i] =
+          new VisionIO() {
+            @Override
+            public void updateInputs(VisionIOInputs inputs) {
+              inputs.connected = true;
+              inputs.framesDrainedThisCycle = 1;
+              inputs.tagIds = new int[] {7};
+              double ts = Timer.getFPGATimestamp();
+              PoseObservation good =
+                  new PoseObservation(
+                      ts,
+                      new Pose3d(4.0, 4.0, 0.0, Rotation3d.kZero),
+                      0.05,
+                      2,
+                      2.0,
+                      ObservationType.PHOTONVISION);
+              if (camIdx == 1) {
+                PoseObservation badAmbiguity =
+                    new PoseObservation(
+                        ts,
+                        new Pose3d(4.50, 4.0, 0.0, Rotation3d.kZero),
+                        0.85,
+                        1,
+                        3.5,
+                        ObservationType.PHOTONVISION);
+                inputs.poseObservations = new PoseObservation[] {good, badAmbiguity};
+              } else {
+                inputs.poseObservations = new PoseObservation[] {good};
+              }
+            }
+          };
+    }
+    FaultSupervisor supFiltered = new FaultSupervisor(3);
+    Vision filteredVision = new Vision((pose, ts, std) -> {}, supFiltered, cams, rejectedTestIos);
+    for (int loop = 0; loop < 10; loop++) {
+      filteredVision.periodic();
+    }
+    assertFalse(
+        supFiltered.isCameraQuarantined(1),
+        "Rejected high-ambiguity observation must never overwrite latestCameraPose");
+  }
+
+  @Test
+  public void testPreMatchCalibratorIgnoresSingleTagPhotonVisionAndBimodalCancellation() {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    SwerveConfig cfg = SwerveConfig.fromFluxFig(fig, "FUEL");
+    Drive drive =
+        new Drive(
+            cfg,
+            new GyroIO() {},
+            new ModuleIOSim(cfg),
+            new ModuleIOSim(cfg),
+            new ModuleIOSim(cfg),
+            new ModuleIOSim(cfg));
+    drive.setPose(new Pose2d(3.0, 4.0, Rotation2d.kZero));
+
+    CameraSpec camSpec = fig.getCamerasForRobot("FUEL").get(0);
+    VisionIO singleTagPvIo =
+        new VisionIO() {
+          @Override
+          public void updateInputs(VisionIOInputs inputs) {
+            inputs.connected = true;
+            inputs.framesDrainedThisCycle = 1;
+            inputs.tagIds = new int[] {7};
+            inputs.poseObservations =
+                new PoseObservation[] {
+                  new PoseObservation(
+                      Timer.getFPGATimestamp(),
+                      new Pose3d(3.0, 4.0, 0.0, new Rotation3d(0.0, 0.0, Math.toRadians(45.0))),
+                      0.05,
+                      1,
+                      2.0,
+                      ObservationType.PHOTONVISION)
+                };
+          }
+        };
+    Vision vision =
+        new Vision(
+            drive::addVisionMeasurement,
+            new FaultSupervisor(1),
+            new CameraSpec[] {camSpec},
+            singleTagPvIo);
+    PreMatchCalibrator calibrator = new PreMatchCalibrator(drive, vision);
+
+    // Feed 60 Disabled loops of single-tag PHOTONVISION with 45 deg yaw error: heading must NOT shift
+    for (int i = 0; i < PreMatchCalibrator.REQUIRED_SAMPLES + 10; i++) {
+      vision.periodic();
+      calibrator.updateDisabled();
+    }
+    assertFalse(
+        calibrator.isGyroSeeded(),
+        "Single-tag PHOTONVISION observations must never seed PreMatchCalibrator gyro");
+    assertEquals(
+        0.0,
+        drive.getPose().getRotation().getDegrees(),
+        1e-3,
+        "Drive heading must not shift from single-tag PHOTONVISION poses while Disabled");
+
+    // Feed 50 alternating 0 deg / 180 deg flips: circular-mean cancellation must be rejected
+    PreMatchCalibrator bimodalCal = new PreMatchCalibrator(drive, vision);
+    for (int i = 0; i < PreMatchCalibrator.REQUIRED_SAMPLES; i++) {
+      Rotation2d flip = (i % 2 == 0) ? Rotation2d.kZero : Rotation2d.kPi;
+      bimodalCal.addObservation(new Pose2d(3.0, 4.0, flip));
+    }
+    assertFalse(
+        bimodalCal.isGyroSeeded(),
+        "Symmetric 180-deg bimodal yaw flips must be rejected instead of cancelling to 0 deg");
+  }
+
+  @Test
+  public void testAngularVelocityClampedAcrossDriveAndCommands() {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    SwerveConfig cfg = SwerveConfig.fromFluxFig(fig, "FUEL");
+    double maxOmega = cfg.maxAngularSpeedRadPerSec();
+    assertEquals(4.71, maxOmega, 1e-6);
+
+    Drive drive =
+        new Drive(
+            cfg,
+            new GyroIO() {},
+            new ModuleIOSim(cfg),
+            new ModuleIOSim(cfg),
+            new ModuleIOSim(cfg),
+            new ModuleIOSim(cfg));
+    drive.setPose(new Pose2d(3.0, 4.0, Rotation2d.kZero));
+
+    // Direct Drive.runVelocity(omega = 9.0) must clamp commanded omega <= 4.71 rad/s
+    drive.runVelocity(new ChassisSpeeds(0.0, 0.0, 9.0));
+    assertTrue(
+        Math.abs(drive.getLastCommandedSpeeds().omegaRadiansPerSecond) <= maxOmega + 1e-6,
+        "Drive.runVelocity must clamp omega <= 4.71 rad/s (got "
+            + drive.getLastCommandedSpeeds().omegaRadiansPerSecond
+            + ")");
+    for (int i = 0; i < 15; i++) {
+      drive.runVelocity(new ChassisSpeeds(0.0, 0.0, 9.0));
+      drive.periodic();
+      assertTrue(
+          Math.abs(drive.getChassisSpeeds().omegaRadiansPerSecond) <= maxOmega + 0.15,
+          "Simulated chassis omega must respect 4.71 rad/s ceiling");
+    }
+
+    // DriveCommands.joystickDriveAtAngle with 180 deg error + full 4.5 m/s translation + feedforward
+    drive.setPose(new Pose2d(3.0, 4.0, Rotation2d.kZero));
+    PiecewiseSensitivity sens =
+        new PiecewiseSensitivity("Test/AimCurve", 0.09, 0.60, 0.10, 0.30, 0.80);
+    Command aimCmd =
+        DriveCommands.joystickDriveAtAngle(
+            drive,
+            sens,
+            () -> 1.0,
+            () -> 0.0,
+            () -> Rotation2d.kPi,
+            () -> 5.0,
+            () -> true);
+    aimCmd.initialize();
+    for (int i = 0; i < 20; i++) {
+      aimCmd.execute();
+      assertTrue(
+          Math.abs(drive.getLastCommandedSpeeds().omegaRadiansPerSecond) <= maxOmega + 1e-6,
+          "joystickDriveAtAngle must clamp total omega <= 4.71 rad/s (got "
+              + drive.getLastCommandedSpeeds().omegaRadiansPerSecond
+              + ")");
+      drive.periodic();
+    }
+    aimCmd.end(false);
+  }
+
+  @Test
+  public void testHardStopHomingGraceWindowAndFailedResetPosition() {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    MechanismSpec hoodSpec = fig.getMechanismSpec("FUEL", "Hood");
+
+    // Case A: Tick-1..4 startup inrush spike at rest followed by normal motion must NOT false-zero
+    double[] currentA = {24.0};
+    double[] velRps = {0.0};
+    boolean[] resetSucceeds = {true};
+    MechanismIO scriptedIo =
+        new MechanismIO() {
+          @Override
+          public void updateInputs(MechanismIOInputs inputs) {
+            inputs.motorConnected = true;
+            inputs.statorCurrentA = currentA[0];
+            inputs.velocityRPS = velRps[0];
+          }
+
+          @Override
+          public boolean resetPosition() {
+            return resetSucceeds[0];
+          }
+        };
+
+    PositionMechanism hoodA = new PositionMechanism(scriptedIo, hoodSpec);
+    HardStopHomingCmd graceCmd = new HardStopHomingCmd(hoodA);
+    graceCmd.initialize();
+    // Loops 1..6: heavy startup inrush at zero velocity (within 8-loop breakaway grace window)
+    for (int i = 0; i < 6; i++) {
+      hoodA.periodic();
+      graceCmd.execute();
+      assertFalse(
+          graceCmd.isFinished(),
+          "Tick-" + (i + 1) + " startup inrush at rest must not false-zero mid-travel");
+    }
+    // Loops 7..15: mechanism breaks away and moves freely (low current, moving)
+    currentA[0] = 6.0;
+    velRps[0] = -3.0;
+    for (int i = 0; i < 9; i++) {
+      hoodA.periodic();
+      graceCmd.execute();
+      assertFalse(graceCmd.isFinished(), "Free-moving mechanism must not finish homing");
+    }
+    graceCmd.end(true);
+    assertFalse(graceCmd.isHomed());
+    assertFalse(hoodA.isZeroConfirmed());
+
+    // Case B: Hard stop reached after grace window, but resetPosition() fails -> Homed/ZeroConfirmed stay false
+    PositionMechanism hoodB = new PositionMechanism(scriptedIo, hoodSpec);
+    resetSucceeds[0] = false;
+    currentA[0] = 24.0;
+    velRps[0] = 0.0;
+    HardStopHomingCmd failedResetCmd = new HardStopHomingCmd(hoodB);
+    failedResetCmd.initialize();
+    int totalRequiredLoops =
+        HardStopHomingCmd.DEFAULT_BREAKAWAY_GRACE_LOOPS
+            + HardStopHomingCmd.DEFAULT_REQUIRED_STALL_LOOPS;
+    for (int i = 0; i < totalRequiredLoops + 2 && !failedResetCmd.isFinished(); i++) {
+      hoodB.periodic();
+      failedResetCmd.execute();
+    }
+    assertTrue(failedResetCmd.isFinished(), "Homing should finish once stall is confirmed");
+    failedResetCmd.end(false);
+    assertFalse(
+        failedResetCmd.isHomed(),
+        "HardStopHomingCmd must NOT mark Homed=true when resetPosition() returns false");
+    assertFalse(
+        hoodB.isZeroConfirmed(),
+        "PositionMechanism must NOT mark ZeroConfirmed=true when resetPosition() returns false");
+  }
+
+  @Test
+  public void testPitSystemCheckFailsInvertedPositionAndReboundingVelocity() {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    RobotContainer container =
+        new RobotContainer(RobotIdentity.FUEL, Paths.get("src/main/deploy/configs"), true);
+    MechanismSpec tilterSpec = fig.getMechanismSpec("FUEL", "Tilter");
+    MechanismSpec hoodSpec = fig.getMechanismSpec("FUEL", "Hood");
+    MechanismSpec intakeSpec = fig.getMechanismSpec("FUEL", "Intake");
+
+    // Backwards-moving Tilter & Hood (move opposite to commanded delta) must FAIL PitSystemCheckCmd
+    MechanismIO invertedPosIo =
+        new MechanismIO() {
+          private double pos = 0.0;
+          private double vel = 0.0;
+
+          @Override
+          public void setPosition(double targetPos) {
+            double dir = Math.signum(targetPos - pos);
+            vel = -dir * 4.0;
+            pos += vel * 0.020;
+          }
+
+          @Override
+          public void stop() {
+            vel = 0.0;
+          }
+
+          @Override
+          public void updateInputs(MechanismIOInputs inputs) {
+            inputs.motorConnected = true;
+            inputs.positionRotations = pos;
+            inputs.velocityRPS = vel;
+            inputs.leaderStatorCurrentA = 8.0;
+            inputs.statorCurrentA = 8.0;
+          }
+        };
+    PositionMechanism invertedHood = new PositionMechanism(invertedPosIo, hoodSpec);
+    invertedHood.resetPosition();
+    MechanismIO invertedTilterIo =
+        new MechanismIO() {
+          private double pos = 0.0;
+          private double vel = 0.0;
+
+          @Override
+          public void setPosition(double targetPos) {
+            double dir = Math.signum(targetPos - pos);
+            vel = -dir * 4.0;
+            pos += vel * 0.020;
+          }
+
+          @Override
+          public void stop() {
+            vel = 0.0;
+          }
+
+          @Override
+          public void updateInputs(MechanismIOInputs inputs) {
+            inputs.motorConnected = true;
+            inputs.positionRotations = pos;
+            inputs.velocityRPS = vel;
+            inputs.leaderStatorCurrentA = 8.0;
+            inputs.statorCurrentA = 8.0;
+          }
+        };
+    PositionMechanism invertedTilter = new PositionMechanism(invertedTilterIo, tilterSpec);
+    invertedTilter.resetPosition();
+
+    // Rebounding inverted velocity mechanism: spins backwards (-15 RPS) then rebounds forwards (+15 RPS)
+    MechanismIO reboundingVelIo =
+        new MechanismIO() {
+          private int activeTick = 0;
+          private double currentVel = 0.0;
+
+          @Override
+          public void setVelocity(double velocityRPS) {
+            activeTick++;
+            currentVel = (activeTick <= 5) ? -15.0 : 15.0;
+          }
+
+          @Override
+          public void stop() {
+            currentVel = 0.0;
+          }
+
+          @Override
+          public void updateInputs(MechanismIOInputs inputs) {
+            inputs.motorConnected = true;
+            inputs.velocityRPS = currentVel;
+            inputs.leaderStatorCurrentA = 10.0;
+            inputs.statorCurrentA = 10.0;
+          }
+        };
+    VelocityMechanism reboundingIntake = new VelocityMechanism(reboundingVelIo, intakeSpec);
+
+    PitSystemCheckCmd check =
+        new PitSystemCheckCmd(
+            container.getDrive(),
+            List.of(
+                new PositionCheckTarget(invertedTilter, -2.0, 0.0),
+                new PositionCheckTarget(invertedHood, 2.0, 0.0)),
+            List.of(new VelocityCheckTarget(reboundingIntake, 20.0)),
+            10,
+            4,
+            () -> {});
+    check.initialize();
+    while (!check.isFinished()) {
+      check.execute();
+      container.getDrive().periodic();
+      invertedTilter.periodic();
+      invertedHood.periodic();
+      reboundingIntake.periodic();
+    }
+    check.end(false);
+
+    assertFalse(
+        check.hasPassed(),
+        "PitSystemCheckCmd must FAIL inverted Tilter/Hood and rebounding inverted velocity mechanism");
+    assertTrue(
+        check.getFailedActuators().stream()
+            .anyMatch(s -> s.contains("Tilter") && s.contains("inverted-direction")),
+        "Failed actuators must flag Tilter inverted-direction: " + check.getFailedActuators());
+    assertTrue(
+        check.getFailedActuators().stream()
+            .anyMatch(s -> s.contains("Hood") && s.contains("inverted-direction")),
+        "Failed actuators must flag Hood inverted-direction: " + check.getFailedActuators());
+    assertTrue(
+        check.getFailedActuators().stream()
+            .anyMatch(s -> s.contains("Intake") && s.contains("inverted-direction")),
+        "Failed actuators must flag rebounding Intake inverted-direction: "
+            + check.getFailedActuators());
   }
 
   private static void deleteTree(Path root) {

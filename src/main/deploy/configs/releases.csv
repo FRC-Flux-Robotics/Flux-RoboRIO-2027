@@ -1,2 +1,3 @@
 version,configSha256,timestamp,author,notes
 v1,817cdbd6,2026-10-28T03:07:37.610530191Z,boris,Baseline 2026/2027 roboRIO configuration
+v2,aa7a7262,2026-11-21T13:20:00Z,boris,M1 CT handoff verified roboRIO configs (wheel-RPS gains, NONE gravity, 33.33-40 RPS range table)

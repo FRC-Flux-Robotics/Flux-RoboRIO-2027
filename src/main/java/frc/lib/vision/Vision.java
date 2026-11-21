@@ -17,8 +17,10 @@ import frc.lib.util.FieldPositions;
 import frc.lib.vision.VisionIO.ObservationType;
 import frc.lib.vision.VisionIO.PoseObservation;
 import frc.lib.vision.VisionIO.VisionIOInputs;
+import java.util.Arrays;
 import java.util.Optional;
 import org.littletonrobotics.junction.Logger;
+import org.littletonrobotics.junction.networktables.LoggedNetworkBoolean;
 
 /**
  * Multi-camera AprilTag vision subsystem that drains the entire unread frame queue from ALL cameras
@@ -47,6 +49,7 @@ public class Vision extends SubsystemBase {
   public static final double MAX_OBS_AGE_SEC = 1.0;
   public static final double MAX_OBS_FUTURE_SEC = 0.05;
   public static final double AUTO_START_VISION_IGNORE_SEC = 2.0;
+  public static final String VISION_ENABLED_NT_KEY = "/SmartDashboard/Vision/Enabled";
 
   private static final int YAW_HISTORY_CAPACITY = 64;
 
@@ -63,8 +66,10 @@ public class Vision extends SubsystemBase {
   private final VisionIOInputs[] inputs;
   private final String[] cameraLogKeys;
   private final Pose2d[] latestCameraPose;
+  private final double[] scratchPeerDistances;
   private final CameraSpec[] configs;
   private final FaultSupervisor faultSupervisor;
+  private final LoggedNetworkBoolean visionEnabledInput;
 
   private final double[] yawSampleTimestamps = new double[YAW_HISTORY_CAPACITY];
   private final double[] yawSampleAbsRates = new double[YAW_HISTORY_CAPACITY];
@@ -77,10 +82,12 @@ public class Vision extends SubsystemBase {
 
   private int totalFramesDrained = 0;
   private int acceptedObservations = 0;
+  private int yawTrustedObservationCount = 0;
   private int rejectedObservations = 0;
   private int rejectedByMotionGate = 0;
   private double lastTagSightTimestampSec = 0.0;
   private Pose2d latestAcceptedPose = null;
+  private Pose2d latestYawTrustedPose = null;
 
   public Vision(
       VisionConsumer consumer,
@@ -97,10 +104,22 @@ public class Vision extends SubsystemBase {
     this.inputs = new VisionIOInputs[ios.length];
     this.cameraLogKeys = new String[ios.length];
     this.latestCameraPose = new Pose2d[ios.length];
+    this.scratchPeerDistances = new double[Math.max(1, ios.length)];
+    this.visionEnabledInput = new LoggedNetworkBoolean(VISION_ENABLED_NT_KEY, true);
     for (int i = 0; i < ios.length; i++) {
       this.inputs[i] = new VisionIOInputs();
       this.cameraLogKeys[i] = "Vision/Camera" + i;
     }
+  }
+
+  /** Enables or disables feeding vision measurements to pose estimation (active in Competition). */
+  public void setVisionEnabled(boolean enabled) {
+    visionEnabledInput.set(enabled);
+    visionEnabledInput.periodic();
+  }
+
+  public boolean isVisionEnabled() {
+    return visionEnabledInput.get();
   }
 
   @Override
@@ -124,28 +143,44 @@ public class Vision extends SubsystemBase {
       Logger.processInputs(cameraLogKeys[camIdx], inputs[camIdx]);
       totalFramesDrained += inputs[camIdx].framesDrainedThisCycle;
       totalVisibleTags += inputs[camIdx].tagIds.length;
+    }
 
-      int len = inputs[camIdx].poseObservations.length;
-      if (len > 0) {
-        Pose3d lastPose = inputs[camIdx].poseObservations[len - 1].robotPose();
-        if (lastPose != null
-            && Double.isFinite(lastPose.getX())
-            && Double.isFinite(lastPose.getY())) {
-          latestCameraPose[camIdx] = lastPose.toPose2d();
+    if (faultSupervisor != null) {
+      faultSupervisor.updateTagVisibility(totalVisibleTags);
+    }
+
+    double peakYawRateRadPerSec = getRecentPeakYawRateRadPerSec(nowSec);
+    boolean visionEnabled = isVisionEnabled();
+    Logger.recordOutput("Vision/Enabled", visionEnabled);
+
+    if (!visionEnabled) {
+      latestAcceptedPose = null;
+      latestYawTrustedPose = null;
+      Logger.recordOutput("Vision/TotalFramesDrained", totalFramesDrained);
+      Logger.recordOutput("Vision/AcceptedObservations", acceptedObservations);
+      Logger.recordOutput("Vision/RejectedObservations", rejectedObservations);
+      Logger.recordOutput("Vision/RejectedByMotionGate", rejectedByMotionGate);
+      Logger.recordOutput("Vision/RecentPeakYawRateRadPerSec", peakYawRateRadPerSec);
+      return;
+    }
+
+    boolean motionGateTripped =
+        inAutoStartIgnoreWindow
+            || peakYawRateRadPerSec > MAX_YAW_RATE_RAD_PER_SEC
+            || Math.abs(latestTiltRad) > MAX_VISION_TILT_RAD;
+
+    // Populate per-camera consensus poses strictly from post-filter accepted observations.
+    for (int camIdx = 0; camIdx < ios.length; camIdx++) {
+      for (PoseObservation obs : inputs[camIdx].poseObservations) {
+        if (passesObservationGates(obs, nowSec, motionGateTripped)) {
+          latestCameraPose[camIdx] = obs.robotPose().toPose2d();
         }
       }
     }
 
     if (faultSupervisor != null) {
-      faultSupervisor.updateTagVisibility(totalVisibleTags);
       auditInterCameraConsensus(latestCameraPose);
     }
-
-    double peakYawRateRadPerSec = getRecentPeakYawRateRadPerSec(nowSec);
-    boolean motionGateTripped =
-        inAutoStartIgnoreWindow
-            || peakYawRateRadPerSec > MAX_YAW_RATE_RAD_PER_SEC
-            || Math.abs(latestTiltRad) > MAX_VISION_TILT_RAD;
 
     for (int camIdx = 0; camIdx < ios.length; camIdx++) {
       double camScalar = configs[camIdx].stdDevScalar();
@@ -161,10 +196,7 @@ public class Vision extends SubsystemBase {
           continue;
         }
         double obsTs = obs.timestampSec();
-        boolean staleOrFuture =
-            obsTs < 0.0
-                || (obsTs - nowSec) > MAX_OBS_FUTURE_SEC
-                || (nowSec > MAX_OBS_AGE_SEC && (nowSec - obsTs) > MAX_OBS_AGE_SEC);
+        boolean staleOrFuture = isStaleOrFuture(obsTs, nowSec);
         if (motionGateTripped || staleOrFuture) {
           if (motionGateTripped) {
             rejectedByMotionGate++;
@@ -174,15 +206,7 @@ public class Vision extends SubsystemBase {
         }
 
         Pose2d pose2d = obs.robotPose().toPose2d();
-        boolean reject =
-            obs.tagCount() <= 0
-                || obs.ambiguity() < 0.0
-                || (obs.tagCount() == 1 && obs.ambiguity() > MAX_AMBIGUITY)
-                || Math.abs(obs.robotPose().getZ()) > MAX_Z_ERROR_METERS
-                || !FieldPositions.isInsideField(
-                    pose2d.getX(), pose2d.getY(), FIELD_MARGIN_METERS);
-
-        if (reject) {
+        if (failsQualityOrFieldGates(obs, pose2d)) {
           rejectedObservations++;
           continue;
         }
@@ -200,6 +224,10 @@ public class Vision extends SubsystemBase {
         boolean trustYaw =
             obs.type() != ObservationType.MEGATAG_2
                 && !(obs.type() == ObservationType.PHOTONVISION && obs.tagCount() <= 1);
+        if (trustYaw) {
+          latestYawTrustedPose = pose2d;
+          yawTrustedObservationCount++;
+        }
         double angularStdDev =
             trustYaw
                 ? Math.max(
@@ -216,6 +244,31 @@ public class Vision extends SubsystemBase {
     Logger.recordOutput("Vision/RejectedObservations", rejectedObservations);
     Logger.recordOutput("Vision/RejectedByMotionGate", rejectedByMotionGate);
     Logger.recordOutput("Vision/RecentPeakYawRateRadPerSec", peakYawRateRadPerSec);
+  }
+
+  private static boolean isStaleOrFuture(double obsTs, double nowSec) {
+    return obsTs < 0.0
+        || (obsTs - nowSec) > MAX_OBS_FUTURE_SEC
+        || (nowSec > MAX_OBS_AGE_SEC && (nowSec - obsTs) > MAX_OBS_AGE_SEC);
+  }
+
+  private static boolean failsQualityOrFieldGates(PoseObservation obs, Pose2d pose2d) {
+    return obs.tagCount() <= 0
+        || obs.ambiguity() < 0.0
+        || (obs.tagCount() == 1 && obs.ambiguity() > MAX_AMBIGUITY)
+        || Math.abs(obs.robotPose().getZ()) > MAX_Z_ERROR_METERS
+        || !FieldPositions.isInsideField(pose2d.getX(), pose2d.getY(), FIELD_MARGIN_METERS);
+  }
+
+  private static boolean passesObservationGates(
+      PoseObservation obs, double nowSec, boolean motionGateTripped) {
+    if (!isFinitePoseObservation(obs)) {
+      return false;
+    }
+    if (motionGateTripped || isStaleOrFuture(obs.timestampSec(), nowSec)) {
+      return false;
+    }
+    return !failsQualityOrFieldGates(obs, obs.robotPose().toPose2d());
   }
 
   public static boolean isFinitePoseObservation(PoseObservation obs) {
@@ -256,21 +309,27 @@ public class Vision extends SubsystemBase {
   }
 
   private void auditInterCameraConsensus(Pose2d[] latestCameraPose) {
+    // Compare each camera against non-quarantined peers using lower-median distance so a single
+    // bent camera (+20 cm) never averages its error into two healthy agreeing peers.
     for (int i = 0; i < latestCameraPose.length; i++) {
       if (latestCameraPose[i] == null) {
         continue;
       }
-      double sumDist = 0.0;
       int peers = 0;
       for (int j = 0; j < latestCameraPose.length; j++) {
-        if (i != j && latestCameraPose[j] != null) {
-          sumDist +=
-              latestCameraPose[i].getTranslation().getDistance(latestCameraPose[j].getTranslation());
-          peers++;
+        if (i != j
+            && latestCameraPose[j] != null
+            && !faultSupervisor.isCameraQuarantined(j)) {
+          scratchPeerDistances[peers++] =
+              latestCameraPose[i]
+                  .getTranslation()
+                  .getDistance(latestCameraPose[j].getTranslation());
         }
       }
       if (peers > 0) {
-        faultSupervisor.auditCameraDiscrepancy(i, sumDist / peers);
+        Arrays.sort(scratchPeerDistances, 0, peers);
+        double medianDist = scratchPeerDistances[(peers - 1) / 2];
+        faultSupervisor.auditCameraDiscrepancy(i, medianDist);
       }
     }
   }
@@ -339,6 +398,18 @@ public class Vision extends SubsystemBase {
 
   public Optional<Pose2d> getLatestAcceptedPose() {
     return Optional.ofNullable(latestAcceptedPose);
+  }
+
+  /**
+   * Returns the latest accepted pose whose yaw is trusted (multi-tag / MegaTag1, never single-tag
+   * PhotonVision or MegaTag2 where angular std-dev is +Infinity).
+   */
+  public Optional<Pose2d> getLatestYawTrustedPose() {
+    return Optional.ofNullable(latestYawTrustedPose);
+  }
+
+  public int getYawTrustedObservationCount() {
+    return yawTrustedObservationCount;
   }
 
   public VisionIO getCameraIo(int index) {

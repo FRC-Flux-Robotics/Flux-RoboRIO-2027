@@ -36,6 +36,8 @@ import org.littletonrobotics.junction.Logger;
  */
 public final class SafeAutoBuilder {
 
+  public static final double DEFAULT_MAX_ANGULAR_SPEED_RAD_PER_SEC = 4.71;
+
   private static volatile String lastStatus = "READY";
   private static volatile String lastCancelReason = "";
 
@@ -289,6 +291,24 @@ public final class SafeAutoBuilder {
       Supplier<Pose2d> poseSupplier,
       Supplier<ChassisSpeeds> velocitySupplier,
       Consumer<ChassisSpeeds> robotRelativeVelocityConsumer) {
+    return followPathCommand(
+        pathName,
+        driveSubsystem,
+        loopPeriodSecSupplier,
+        poseSupplier,
+        velocitySupplier,
+        robotRelativeVelocityConsumer,
+        DEFAULT_MAX_ANGULAR_SPEED_RAD_PER_SEC);
+  }
+
+  public static Command followPathCommand(
+      String pathName,
+      Subsystem driveSubsystem,
+      DoubleSupplier loopPeriodSecSupplier,
+      Supplier<Pose2d> poseSupplier,
+      Supplier<ChassisSpeeds> velocitySupplier,
+      Consumer<ChassisSpeeds> robotRelativeVelocityConsumer,
+      double maxAngularSpeedRadPerSec) {
     try {
       PathPlannerPath path = PathPlannerPath.fromPathFile(pathName);
       String rawJson = readPathJson(pathName);
@@ -314,6 +334,7 @@ public final class SafeAutoBuilder {
               poses,
               maxVel,
               maxAccel,
+              Math.max(0.5, maxAngularSpeedRadPerSec),
               numSegments,
               rotStops,
               eventStops,
@@ -388,6 +409,7 @@ public final class SafeAutoBuilder {
       List<Pose2d> poses,
       double maxVel,
       double maxAccel,
+      double maxAngularSpeedRadPerSec,
       int numSegments,
       List<PathRotationStop> rotStops,
       List<PathEventStop> eventStops,
@@ -503,7 +525,8 @@ public final class SafeAutoBuilder {
 
         double yawErr =
             MathUtil.angleModulus(targetHeading.minus(currentPose.getRotation()).getRadians());
-        double omegaCmd = MathUtil.clamp(yawErr * 5.5, -5.5, 5.5);
+        double omegaCmd =
+            MathUtil.clamp(yawErr * 5.5, -maxAngularSpeedRadPerSec, maxAngularSpeedRadPerSec);
 
         robotRelativeVelocityConsumer.accept(
             ChassisSpeeds.fromFieldRelativeSpeeds(

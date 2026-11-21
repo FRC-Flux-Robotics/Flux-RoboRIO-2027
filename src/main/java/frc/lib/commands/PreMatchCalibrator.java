@@ -27,6 +27,7 @@ public class PreMatchCalibrator {
   public static final double MAX_START_HEADING_ERROR_DEG = 3.0;
   public static final double MAX_STATIONARY_OMEGA_RAD_PER_SEC = Math.toRadians(0.5);
   public static final double MAX_STATIONARY_LINEAR_SPEED_MPS = 0.05;
+  public static final double MIN_CIRCULAR_RESULTANT_LENGTH = 0.85;
   private static final double RESEED_TRANSLATION_EPSILON_METERS = 0.005;
   private static final double RESEED_HEADING_EPSILON_DEG = 0.15;
 
@@ -40,7 +41,8 @@ public class PreMatchCalibrator {
   private boolean manualHeadingOverrideActive = false;
   private double poseErrorMeters = 99.0;
   private double headingErrorDeg = 180.0;
-  private int lastConsumedAcceptedCount = 0;
+  private int lastConsumedYawTrustedCount = 0;
+  private double lastHeadingConsistency = 0.0;
   private Pose2d lastSeededPose = null;
 
   public PreMatchCalibrator(Drive drive, Vision vision) {
@@ -68,7 +70,7 @@ public class PreMatchCalibrator {
 
   /** Runs every loop during {@code disabledPeriodic()} to seed the gyro and audit start pose. */
   public void updateDisabled() {
-    if (manualHeadingOverrideActive) {
+    if (manualHeadingOverrideActive || !vision.isVisionEnabled()) {
       publishTelemetry();
       return;
     }
@@ -77,16 +79,16 @@ public class PreMatchCalibrator {
         Math.hypot(speeds.vxMetersPerSecond, speeds.vyMetersPerSecond)
                 <= MAX_STATIONARY_LINEAR_SPEED_MPS
             && Math.abs(speeds.omegaRadiansPerSecond) <= MAX_STATIONARY_OMEGA_RAD_PER_SEC;
-    Optional<Pose2d> latestVision = vision.getLatestAcceptedPose();
-    int acceptedCount = vision.getAcceptedObservationCount();
-    if (stationary && latestVision.isPresent() && acceptedCount > lastConsumedAcceptedCount) {
-      lastConsumedAcceptedCount = acceptedCount;
+    Optional<Pose2d> latestVision = vision.getLatestYawTrustedPose();
+    int yawTrustedCount = vision.getYawTrustedObservationCount();
+    if (stationary && latestVision.isPresent() && yawTrustedCount > lastConsumedYawTrustedCount) {
+      lastConsumedYawTrustedCount = yawTrustedCount;
       addObservation(latestVision.get());
     }
     publishTelemetry();
   }
 
-  /** Records a stationary MegaTag1 observation and updates the circular median seed once full. */
+  /** Records a stationary yaw-trusted observation and updates the circular median seed once full. */
   public void addObservation(Pose2d observation) {
     if (manualHeadingOverrideActive) {
       return;
@@ -97,7 +99,11 @@ public class PreMatchCalibrator {
     window.addLast(observation);
 
     if (window.size() >= REQUIRED_SAMPLES) {
-      Pose2d seededPose = computeCircularMedianPose();
+      Optional<Pose2d> seededPoseOpt = computeCircularMedianPose();
+      if (seededPoseOpt.isEmpty()) {
+        return;
+      }
+      Pose2d seededPose = seededPoseOpt.get();
       if (lastSeededPose == null
           || seededPose.getTranslation().getDistance(lastSeededPose.getTranslation())
               > RESEED_TRANSLATION_EPSILON_METERS
@@ -117,7 +123,7 @@ public class PreMatchCalibrator {
     }
   }
 
-  private Pose2d computeCircularMedianPose() {
+  private Optional<Pose2d> computeCircularMedianPose() {
     List<Double> xs = new ArrayList<>(window.size());
     List<Double> ys = new ArrayList<>(window.size());
     double sumSin = 0.0;
@@ -128,11 +134,17 @@ public class PreMatchCalibrator {
       sumSin += p.getRotation().getSin();
       sumCos += p.getRotation().getCos();
     }
+    // Guard against symmetric 180-deg bimodal yaw flips cancelling (sumCos, sumSin) to (0, 0).
+    double resultantLength = Math.hypot(sumCos, sumSin) / window.size();
+    lastHeadingConsistency = resultantLength;
+    if (!Double.isFinite(resultantLength) || resultantLength < MIN_CIRCULAR_RESULTANT_LENGTH) {
+      return Optional.empty();
+    }
     Collections.sort(xs);
     Collections.sort(ys);
     int mid = xs.size() / 2;
-    return new Pose2d(
-        new Translation2d(xs.get(mid), ys.get(mid)), new Rotation2d(sumCos, sumSin));
+    return Optional.of(
+        new Pose2d(new Translation2d(xs.get(mid), ys.get(mid)), new Rotation2d(sumCos, sumSin)));
   }
 
   private void publishTelemetry() {
@@ -140,6 +152,7 @@ public class PreMatchCalibrator {
     Logger.recordOutput("PreMatch/GyroSeeded", gyroSeeded);
     Logger.recordOutput("PreMatch/PoseErrorMeters", poseErrorMeters);
     Logger.recordOutput("PreMatch/HeadingErrorDeg", headingErrorDeg);
+    Logger.recordOutput("PreMatch/HeadingConsistency", lastHeadingConsistency);
     Logger.recordOutput("PreMatch/ReadyToPlay", readyToPlay);
     Logger.recordOutput("PreMatch/ManualHeadingOverride", manualHeadingOverrideActive);
   }

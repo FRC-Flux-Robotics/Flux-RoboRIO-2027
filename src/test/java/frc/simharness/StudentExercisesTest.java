@@ -110,6 +110,7 @@ public class StudentExercisesTest {
   public void testExercise4_createMultiVolleyHubAuto() {
     RobotContainer container =
         new RobotContainer(RobotIdentity.FUEL, Paths.get("src/main/deploy/configs"), true);
+    container.resetMechanismEncoders();
     Drive drive = container.getDrive();
     Superstructure ss = container.getSuperstructure();
     var multiVolleyAuto =

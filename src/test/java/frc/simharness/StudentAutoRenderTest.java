@@ -47,7 +47,7 @@ public class StudentAutoRenderTest {
 
     var selectedAuto =
         "list".equalsIgnoreCase(selector)
-            ? container.getAutonomousCommand()
+            ? container.resolveAutonomousCommand("")
             : container.resolveAutonomousCommand(selector);
     Path outDir = Paths.get("build/auto-sim");
     var frames =

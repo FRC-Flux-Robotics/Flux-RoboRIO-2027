@@ -60,5 +60,7 @@ public interface MechanismIO {
 
   default void stop() {}
 
-  default void resetPosition() {}
+  default boolean resetPosition() {
+    return true;
+  }
 }

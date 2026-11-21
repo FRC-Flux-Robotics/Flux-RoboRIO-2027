@@ -98,8 +98,6 @@ public interface ModuleIO {
 
   default void setTurnOpenLoop(double volts) {}
 
-  default void setDriveStatorCurrentLimit(double statorLimitAmps) {}
-
   default void stop() {}
 
   default void warmup() {}

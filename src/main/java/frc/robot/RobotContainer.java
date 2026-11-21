@@ -107,6 +107,12 @@ public class RobotContainer {
   /** Canonical Blue Alliance Hub shooting alignment pose in 2026 Wall/Blue coordinates. */
   public static final Pose2d BLUE_HUB_ALIGN_POSE = new Pose2d(2.5, 4.1, Rotation2d.kZero);
 
+  /** Safe do-nothing autonomous default that never overwrites odometry or commands drive output. */
+  public static final String SAFE_DEFAULT_AUTO_NAME = "Do Nothing (Safe Default)";
+
+  /** Safe low open-loop voltage used for Teleop D-pad manual jogging of Hood and Tilter. */
+  public static final double MANUAL_JOG_VOLTS = 1.8;
+
   private static final int CONFIG_DISK_POLL_INTERVAL_LOOPS = 25;
 
   private final RobotIdentity identity;
@@ -357,15 +363,11 @@ public class RobotContainer {
   }
 
   private void configureAutoChooser() {
+    autoChooser.addDefaultOption(
+        SAFE_DEFAULT_AUTO_NAME, Commands.none().withName(SAFE_DEFAULT_AUTO_NAME));
     var namedAutos = StudentAutoRoutines.createNamedAutos(drive, superstructure, shotCalculator);
-    boolean firstAdded = false;
     for (var entry : namedAutos.entrySet()) {
-      if (!firstAdded) {
-        autoChooser.addDefaultOption(entry.getKey(), entry.getValue());
-        firstAdded = true;
-      } else {
-        autoChooser.addOption(entry.getKey(), entry.getValue());
-      }
+      autoChooser.addOption(entry.getKey(), entry.getValue());
     }
     autoChooser.addOption("Hub to Depot PathPlanner Path", drive.followPathCommand("Hub to Depot"));
     autoChooser.addOption(
@@ -417,13 +419,20 @@ public class RobotContainer {
   public void resetMechanismEncoders() {
     tilter.stop();
     hood.stop();
-    tilter.resetPosition();
-    hood.resetPosition();
-    Logger.recordOutput("Superstructure/EncodersZeroed", true);
+    boolean tilterOk = tilter.resetPosition();
+    boolean hoodOk = hood.resetPosition();
+    Logger.recordOutput("Superstructure/EncodersZeroed", tilterOk && hoodOk);
+  }
+
+  /** Creates a Teleop-safe manual open-loop jog command that stops cleanly on button release. */
+  public Command createManualJogCommand(PositionMechanism mechanism, double volts) {
+    return Commands.run(() -> mechanism.jogVoltage(volts), mechanism, superstructure)
+        .beforeStarting(this::resetSuperstructureToIdle)
+        .finallyDo(mechanism::stop);
   }
 
   /**
-   * Manual close-range shoot fallback ({@code 33.33 RPS}, {@code 2.80 rot} hood): waits for
+   * Manual close-range shoot fallback ({@code 33.33 RPS}, {@code 0.0 rot} hood): waits for
    * flywheel and hood tolerances before feeding without requiring AprilTag localization.
    */
   public Command createManualShortShotCommand() {
@@ -448,6 +457,19 @@ public class RobotContainer {
       double realBatteryVoltageV,
       double simBatteryVoltageV) {
     return (!forceSimIo && isRealRobot) ? realBatteryVoltageV : simBatteryVoltageV;
+  }
+
+  /**
+   * Selects the battery internal resistance (mOhm) fed to {@link FaultSupervisor}: when the inline
+   * CAN battery gauge is connected, always trust its measured {@code R_int} regardless of health
+   * status (so weak batteries > 22 mOhm or < 75% SoC still derate); otherwise use the nominal
+   * {@code batteries.csv} resistance.
+   */
+  public static double selectEffectiveRintMilliOhms(
+      boolean batteryConnected,
+      double batteryGaugeRintMilliOhms,
+      double nominalCsvRintMilliOhms) {
+    return batteryConnected ? batteryGaugeRintMilliOhms : nominalCsvRintMilliOhms;
   }
 
   /** Warms up lazy math, odometry, and AdvantageKit struct buffers during {@code robotInit()}. */
@@ -540,7 +562,11 @@ public class RobotContainer {
     operatorController.start().onTrue(new HardStopHomingCmd(hood).onlyIf(pitTestAllowed));
     operatorController
         .back()
-        .onTrue(Commands.runOnce(this::resetMechanismEncoders, tilter, hood).onlyIf(pitTestAllowed));
+        .onTrue(Commands.runOnce(this::resetMechanismEncoders, tilter, hood).ignoringDisable(true));
+    operatorController.povUp().whileTrue(createManualJogCommand(hood, MANUAL_JOG_VOLTS));
+    operatorController.povDown().whileTrue(createManualJogCommand(hood, -MANUAL_JOG_VOLTS));
+    operatorController.povLeft().whileTrue(createManualJogCommand(tilter, -MANUAL_JOG_VOLTS));
+    operatorController.povRight().whileTrue(createManualJogCommand(tilter, MANUAL_JOG_VOLTS));
   }
 
   public PitSystemCheckCmd createPitSystemCheckCommand() {
@@ -700,9 +726,10 @@ public class RobotContainer {
         selectEffectiveBatteryVoltage(
             forceSimIo, RobotBase.isReal(), RobotController.getBatteryVoltage(), simVBat);
     double effectiveRintMohm =
-        batteryIo.isHealthy()
-            ? batteryIo.getInternalResistanceMilliOhms()
-            : virtualBatterySim.estimatedRintMilliOhms();
+        selectEffectiveRintMilliOhms(
+            batteryIo.isConnected(),
+            batteryIo.getInternalResistanceMilliOhms(),
+            batteryIo.getNominalRintMilliOhms());
     faultSupervisor.updateBatteryProtection(effectiveVBat, effectiveRintMohm);
     drive.applyBatteryProtection(faultSupervisor);
 
@@ -728,18 +755,16 @@ public class RobotContainer {
 
   public Command getAutonomousCommand() {
     Command selected = autoChooser.get();
-    return (selected != null)
-        ? selected
-        : StudentAutoRoutines.createStudentDefaultAuto(drive, superstructure, shotCalculator);
+    return (selected != null) ? selected : Commands.none().withName(SAFE_DEFAULT_AUTO_NAME);
   }
 
   /**
    * Resolves a named 2026 autonomous routine by exact or case-insensitive substring match for
-   * {@code ./gradlew renderAuto -Pauto="<name>"}.
+   * {@code ./gradlew renderAuto -Pauto="<name>"}. Empty selector renders the student starter auto.
    */
   public Command resolveAutonomousCommand(String selector) {
     if (selector == null || selector.isBlank()) {
-      return getAutonomousCommand();
+      return StudentAutoRoutines.createStudentDefaultAuto(drive, superstructure, shotCalculator);
     }
     String needle = selector.trim().toLowerCase(java.util.Locale.US);
     var namedAutos = StudentAutoRoutines.createNamedAutos(drive, superstructure, shotCalculator);

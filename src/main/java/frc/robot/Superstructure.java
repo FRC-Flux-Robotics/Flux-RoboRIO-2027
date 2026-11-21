@@ -37,7 +37,7 @@ public class Superstructure extends SubsystemBase {
   public static final double DEFAULT_TILTER_CLIMB_ROT = -6.0;
   public static final double DEFAULT_SHOOTER_IDLE_RPS = 0.0;
   public static final double DEFAULT_SHORT_SHOOTER_RPS = 33.33;
-  public static final double DEFAULT_SHORT_HOOD_ROT = 2.80;
+  public static final double DEFAULT_SHORT_HOOD_ROT = 0.0;
   public static final double DEFAULT_MID_SHOOTER_RPS = 36.67;
   public static final double DEFAULT_MID_HOOD_ROT = 3.90;
   public static final double DEFAULT_LONG_SHOOTER_RPS = 40.0;
@@ -367,6 +367,8 @@ public class Superstructure extends SubsystemBase {
 
     Logger.recordOutput("Superstructure/State", state.name());
     Logger.recordOutput("Superstructure/ReadyToFire", isReadyToFire());
+    Logger.recordOutput(
+        "Superstructure/ZeroConfirmed", tilter.isZeroConfirmed() && hood.isZeroConfirmed());
     Logger.recordOutput("Superstructure/ShotInRange", shotInRange);
     Logger.recordOutput(
         "Superstructure/AimHeadingErrorDeg",

@@ -24,7 +24,10 @@ public class PositionMechanism extends SubsystemBase {
   private final LoggedTunableNumber kV;
   private final LoggedTunableNumber kG;
 
+  public static final double MAX_MANUAL_JOG_VOLTS = 2.5;
+
   private double targetPosition = 0.0;
+  private boolean zeroConfirmed = false;
   private final double toleranceRot;
 
   public PositionMechanism(MechanismIO io, MechanismSpec spec) {
@@ -61,10 +64,19 @@ public class PositionMechanism extends SubsystemBase {
     Logger.processInputs(spec.mechanism(), inputs);
     Logger.recordOutput(spec.mechanism() + "/TargetPosition", targetPosition);
     Logger.recordOutput(spec.mechanism() + "/AtTarget", atTarget());
+    Logger.recordOutput(spec.mechanism() + "/ZeroConfirmed", zeroConfirmed);
   }
 
-  /** Commands the mechanism to a target position in rotations (clamped to CSV soft limits). */
+  /**
+   * Commands the mechanism to a target position in rotations (clamped to CSV soft limits). Stays
+   * neutral until {@link #resetPosition()} succeeds so un-homed relative encoders never slam into a
+   * hard stop on enable.
+   */
   public void setPosition(double positionRotations) {
+    if (!zeroConfirmed) {
+      io.stop();
+      return;
+    }
     targetPosition = MathUtil.clamp(positionRotations, spec.minPosRot(), spec.maxPosRot());
     io.setPosition(targetPosition);
   }
@@ -79,12 +91,35 @@ public class PositionMechanism extends SubsystemBase {
     io.setHomingVoltage(volts);
   }
 
+  /**
+   * Commands safe low-voltage manual jog in Teleop: respects CSV/hardware soft limits once zeroed,
+   * while still allowing operators to jog toward the physical hard stop prior to re-zeroing.
+   */
+  public void jogVoltage(double volts) {
+    double clampedVolts = MathUtil.clamp(volts, -MAX_MANUAL_JOG_VOLTS, MAX_MANUAL_JOG_VOLTS);
+    if (zeroConfirmed) {
+      double pos = getPosition();
+      if ((clampedVolts > 0.0 && pos >= spec.maxPosRot())
+          || (clampedVolts < 0.0 && pos <= spec.minPosRot())) {
+        io.stop();
+        return;
+      }
+      io.setVoltage(clampedVolts);
+    } else {
+      io.setHomingVoltage(clampedVolts);
+    }
+  }
+
   public void stop() {
     io.stop();
   }
 
   public boolean atTarget() {
-    return Math.abs(getPosition() - targetPosition) <= toleranceRot;
+    return zeroConfirmed && Math.abs(getPosition() - targetPosition) <= toleranceRot;
+  }
+
+  public boolean isZeroConfirmed() {
+    return zeroConfirmed;
   }
 
   public double getPosition() {
@@ -122,10 +157,16 @@ public class PositionMechanism extends SubsystemBase {
     return inputs.motorConnected;
   }
 
-  public void resetPosition() {
-    targetPosition = 0.0;
+  /** Zeroes the mechanism encoder and confirms zero only when the hardware write succeeds. */
+  public boolean resetPosition() {
     io.stop();
-    io.resetPosition();
+    boolean ok = io.resetPosition();
+    if (ok) {
+      targetPosition = 0.0;
+      zeroConfirmed = true;
+    }
+    Logger.recordOutput(spec.mechanism() + "/ZeroConfirmed", zeroConfirmed);
+    return ok;
   }
 
   public double getTargetPosition() {

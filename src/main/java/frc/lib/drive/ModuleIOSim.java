@@ -68,11 +68,6 @@ public class ModuleIOSim implements ModuleIO {
   }
 
   @Override
-  public void setDriveStatorCurrentLimit(double statorLimitAmps) {
-    activeStatorLimitAmps = Math.min(60.0, Math.max(20.0, statorLimitAmps));
-  }
-
-  @Override
   public void stop() {
     driveClosedLoop = false;
     turnClosedLoop = false;

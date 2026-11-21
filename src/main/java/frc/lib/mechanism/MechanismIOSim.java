@@ -141,7 +141,7 @@ public class MechanismIOSim implements MechanismIO {
   }
 
   @Override
-  public void resetPosition() {
+  public boolean resetPosition() {
     if (plantType == SimPlantType.ELEVATOR_STATIC) {
       elevatorSim.setState(0.0, 0.0);
     } else if (plantType == SimPlantType.ARM_COSINE) {
@@ -149,6 +149,7 @@ public class MechanismIOSim implements MechanismIO {
     } else {
       dcSim.setState(0.0, 0.0);
     }
+    return true;
   }
 
   @Override

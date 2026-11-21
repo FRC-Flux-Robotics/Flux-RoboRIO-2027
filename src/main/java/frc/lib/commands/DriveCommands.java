@@ -1,5 +1,6 @@
 package frc.lib.commands;
 
+import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.controller.ProfiledPIDController;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
@@ -25,7 +26,6 @@ import org.littletonrobotics.junction.Logger;
 public final class DriveCommands {
   private static final double ANGLE_KP = 5.0;
   private static final double ANGLE_KD = 0.25;
-  private static final double ANGLE_MAX_VELOCITY_RAD_PER_SEC = 8.0;
   private static final double ANGLE_MAX_ACCEL_RAD_PER_SEC_SQ = 20.0;
 
   private DriveCommands() {}
@@ -136,13 +136,13 @@ public final class DriveCommands {
       DoubleSupplier headingFeedforwardRadPerSecSupplier,
       BooleanSupplier deadManHeldSupplier,
       Subsystem... extraRequirements) {
+    double maxAngular = drive.getConfig().maxAngularSpeedRadPerSec();
     ProfiledPIDController angleController =
         new ProfiledPIDController(
             ANGLE_KP,
             0.0,
             ANGLE_KD,
-            new TrapezoidProfile.Constraints(
-                ANGLE_MAX_VELOCITY_RAD_PER_SEC, ANGLE_MAX_ACCEL_RAD_PER_SEC_SQ));
+            new TrapezoidProfile.Constraints(maxAngular, ANGLE_MAX_ACCEL_RAD_PER_SEC_SQ));
     angleController.enableContinuousInput(-Math.PI, Math.PI);
 
     Subsystem[] allRequirements = new Subsystem[1 + extraRequirements.length];
@@ -159,10 +159,11 @@ public final class DriveCommands {
 
               Rotation2d currentHeading = drive.getPose().getRotation();
               Rotation2d targetHeading = targetHeadingSupplier.get();
-              double omegaCmd =
+              double rawOmegaCmd =
                   angleController.calculate(
                           currentHeading.getRadians(), targetHeading.getRadians())
                       + headingFeedforwardRadPerSecSupplier.getAsDouble();
+              double omegaCmd = MathUtil.clamp(rawOmegaCmd, -maxAngular, maxAngular);
 
               ChassisSpeeds desiredFieldSpeeds =
                   new ChassisSpeeds(

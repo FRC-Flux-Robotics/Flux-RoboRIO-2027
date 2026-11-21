@@ -27,7 +27,7 @@ public class VisionIOSim implements VisionIO {
   private int visibleTagCount = 2;
   private double avgTagDistMeters = 2.6;
   private double singleTagAmbiguity = 0.08;
-  private ObservationType observationType = ObservationType.MEGATAG_2;
+  private ObservationType observationType = ObservationType.MEGATAG_1;
 
   private static final Translation2d[] DEFAULT_SHOP_WALL_TAGS =
       new Translation2d[] {

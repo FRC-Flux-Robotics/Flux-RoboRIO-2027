@@ -69,8 +69,6 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
   private final Queue<Double> drivePositionQueue;
   private final Queue<Double> turnPositionQueue;
 
-  private double activeStatorLimitAmps;
-
   public ModuleIOTalonFX(SwerveConfig swerveConfig, CornerConfig corner) {
     if (swerveConfig.driveStatorLimitAmps() > 60.0 || swerveConfig.driveSlipCurrentAmps() > 60.0) {
       throw new IllegalArgumentException(
@@ -88,7 +86,7 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
     }
 
     this.swerveConfig = swerveConfig;
-    this.activeStatorLimitAmps =
+    double bootStatorLimitAmps =
         Math.min(swerveConfig.driveStatorLimitAmps(), swerveConfig.driveSlipCurrentAmps());
 
     CANBus bus = new CANBus(swerveConfig.canBus());
@@ -113,7 +111,7 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
             : InvertedValue.CounterClockwise_Positive;
     driveCfg.Feedback.SensorToMechanismRatio = swerveConfig.driveGearRatio();
     driveCfg.CurrentLimits.StatorCurrentLimitEnable = true;
-    driveCfg.CurrentLimits.StatorCurrentLimit = activeStatorLimitAmps;
+    driveCfg.CurrentLimits.StatorCurrentLimit = bootStatorLimitAmps;
     driveCfg.CurrentLimits.SupplyCurrentLimitEnable = true;
     driveCfg.CurrentLimits.SupplyCurrentLimit = swerveConfig.driveSupplyLimitAmps();
     driveCfg.Slot0.kP = swerveConfig.driveKp();
@@ -211,11 +209,11 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
         turnStatorCurrent,
         turnSupplyCurrent);
 
+    // Odometry position/velocity signals are owned exclusively by 250 Hz PhoenixOdometryThread
+    // under ODOMETRY_LOCK to eliminate dual-thread CTRE StatusSignal refresh races.
     driveSignalGroup =
         PhoenixSignals.register(
             swerveConfig.canBus(),
-            drivePosition,
-            driveVelocity,
             driveAppliedVolts,
             driveStatorCurrent,
             driveSupplyCurrent);
@@ -223,8 +221,6 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
         PhoenixSignals.register(
             swerveConfig.canBus(),
             turnAbsolutePosition,
-            turnPosition,
-            turnVelocity,
             turnAppliedVolts,
             turnStatorCurrent,
             turnSupplyCurrent);
@@ -309,19 +305,6 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
   }
 
   @Override
-  public void setDriveStatorCurrentLimit(double statorLimitAmps) {
-    // Never call getConfigurator().apply() inside the 50 Hz / 200 Hz control loop (blocking 10 ms
-    // x 4 = 40 ms CAN transaction + TalonFX flash EEPROM wear). The 60A stator / 40A supply ceiling
-    // is locked in TalonFX hardware at boot, and dynamic brownout load-shedding scales velocity /
-    // voltage demand in Drive.runVelocity() via brownoutDemandScale.
-    activeStatorLimitAmps = Math.min(60.0, Math.max(20.0, statorLimitAmps));
-  }
-
-  public double getActiveStatorLimitAmps() {
-    return activeStatorLimitAmps;
-  }
-
-  @Override
   public void stop() {
     driveTalon.setControl(neutralReq);
     turnTalon.setControl(neutralReq);
@@ -329,24 +312,32 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
 
   @Override
   public void updateInputs(ModuleIOInputs inputs) {
-    inputs.driveConnected = PhoenixSignals.isOK(driveSignalGroup);
-    inputs.drivePositionRad = Units.rotationsToRadians(drivePosition.getValueAsDouble());
-    inputs.driveVelocityRadPerSec = Units.rotationsToRadians(driveVelocity.getValueAsDouble());
     inputs.driveAppliedVolts = driveAppliedVolts.getValueAsDouble();
     inputs.driveStatorCurrentAmps = driveStatorCurrent.getValueAsDouble();
     inputs.driveSupplyCurrentAmps = driveSupplyCurrent.getValueAsDouble();
 
-    inputs.turnConnected = PhoenixSignals.isOK(turnSignalGroup);
     inputs.usingFusedCancoder = usingFusedCancoder;
     inputs.turnAbsolutePosition = Rotation2d.fromRotations(turnAbsolutePosition.getValueAsDouble());
-    inputs.turnPosition = Rotation2d.fromRotations(turnPosition.getValueAsDouble());
-    inputs.turnVelocityRadPerSec = Units.rotationsToRadians(turnVelocity.getValueAsDouble());
     inputs.turnAppliedVolts = turnAppliedVolts.getValueAsDouble();
     inputs.turnStatorCurrentAmps = turnStatorCurrent.getValueAsDouble();
     inputs.turnSupplyCurrentAmps = turnSupplyCurrent.getValueAsDouble();
 
     PhoenixOdometryThread.ODOMETRY_LOCK.lock();
     try {
+      inputs.driveConnected =
+          PhoenixSignals.isOK(driveSignalGroup)
+              && drivePosition.getStatus().isOK()
+              && driveVelocity.getStatus().isOK();
+      inputs.drivePositionRad = Units.rotationsToRadians(drivePosition.getValueAsDouble());
+      inputs.driveVelocityRadPerSec = Units.rotationsToRadians(driveVelocity.getValueAsDouble());
+
+      inputs.turnConnected =
+          PhoenixSignals.isOK(turnSignalGroup)
+              && turnPosition.getStatus().isOK()
+              && turnVelocity.getStatus().isOK();
+      inputs.turnPosition = Rotation2d.fromRotations(turnPosition.getValueAsDouble());
+      inputs.turnVelocityRadPerSec = Units.rotationsToRadians(turnVelocity.getValueAsDouble());
+
       int nTimestamps = timestampQueue.size();
       inputs.odometryTimestamps = new double[nTimestamps];
       for (int i = 0; i < nTimestamps; i++) {
