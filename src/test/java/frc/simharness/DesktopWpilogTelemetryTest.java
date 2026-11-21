@@ -6,11 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import edu.wpi.first.hal.HAL;
-import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.wpilibj.simulation.DriverStationSim;
+import edu.wpi.first.wpilibj.simulation.XboxControllerSim;
 import frc.lib.fluxfig.FluxWpiLogCodec;
 import frc.robot.Robot;
-import frc.robot.Superstructure;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -91,18 +90,20 @@ public class DesktopWpilogTelemetryTest {
       assertNotNull(robot.getRobotContainer(), "RobotContainer must initialize inside startCompetition");
       expectedConfigSha = robot.getRobotContainer().getBootConfigSha256();
 
-      // Enable Teleop and exercise drive + shooter/hood across the full target duration
+      // Enable Teleop and drive via XboxControllerSim so all Drive/Superstructure/Logger calls run
+      // strictly on the robot loop thread (zero cross-thread StructBuffer races).
+      XboxControllerSim driverSim = new XboxControllerSim(0);
+      driverSim.setLeftY(-0.35);
+      driverSim.setRightX(-0.15);
+      driverSim.setRightTriggerAxis(1.0);
+      driverSim.notifyNewData();
       DriverStationSim.setEnabled(true);
       DriverStationSim.notifyNewData();
 
       long endAtMs = System.currentTimeMillis() + durationSec * 1000L;
       boolean sawEnabledHeartbeat = false;
       while (System.currentTimeMillis() < endAtMs) {
-        robot.getRobotContainer().getDrive().runVelocity(new ChassisSpeeds(1.2, 0.0, 0.3));
-        robot
-            .getRobotContainer()
-            .getSuperstructure()
-            .shoot(Superstructure.DEFAULT_MID_SHOOTER_RPS, Superstructure.DEFAULT_MID_HOOD_ROT);
+        driverSim.notifyNewData();
         if (!sawEnabledHeartbeat && Files.exists(stateFile)) {
           String txt = Files.readString(stateFile, StandardCharsets.UTF_8);
           if (txt.contains("STATE=ENABLED") && txt.contains("ENABLED=true")) {
@@ -113,6 +114,10 @@ public class DesktopWpilogTelemetryTest {
       }
       assertTrue(sawEnabledHeartbeat, "Atomic robot state file must report STATE=ENABLED during run");
 
+      driverSim.setLeftY(0.0);
+      driverSim.setRightX(0.0);
+      driverSim.setRightTriggerAxis(0.0);
+      driverSim.notifyNewData();
       DriverStationSim.setEnabled(false);
       DriverStationSim.notifyNewData();
       Thread.sleep(150);
