@@ -13,6 +13,7 @@ Columns flow Left -> Right from top-level entry points down to low-level utiliti
   Col 2:         3. Hardware & Sim IO (*IO) (ModuleIO*, GyroIO*, VisionIO*, MechanismIO*)
   Col 3 (Right): 4. Config, CAN & Log Utils (FluxFig, FieldPositions, ShotCalculator, LoggedTunableNumber, PhoenixSignals, etc.)
 """
+import html
 import json
 import re
 from pathlib import Path
@@ -331,7 +332,7 @@ def generate_svg(nodes, edges):
     ]
     for c_idx, h_text in enumerate(headers):
         svg.append(
-            f'  <text x="{col_x[c_idx] + 4}" y="62" fill="#2B7BFF" font-family="system-ui, -apple-system, sans-serif" font-size="11.5" font-weight="700">{h_text}</text>'
+            f'  <text x="{col_x[c_idx] + 4}" y="62" fill="#2B7BFF" font-family="system-ui, -apple-system, sans-serif" font-size="11.5" font-weight="700">{html.escape(h_text)}</text>'
         )
 
     for u, v in edges:

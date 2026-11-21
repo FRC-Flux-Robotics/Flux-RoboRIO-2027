@@ -64,6 +64,7 @@ import frc.lib.vision.Vision;
 import frc.lib.vision.VisionIO;
 import frc.lib.vision.VisionIO.ObservationType;
 import frc.lib.vision.VisionIO.PoseObservation;
+import frc.lib.vision.VisionIOPhotonVision;
 import frc.lib.vision.VisionIOSim;
 import frc.lib.vision.ZeroPriorBootstrapSolver;
 import frc.lib.vision.ZeroPriorBootstrapSolver.PivotObservationPair;
@@ -86,9 +87,14 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Random;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.photonvision.EstimatedRobotPose;
+import org.photonvision.PhotonPoseEstimator.PoseStrategy;
+import org.photonvision.targeting.PhotonTrackedTarget;
+import org.photonvision.targeting.TargetCorner;
 
 /**
  * Tier 2 Verification Gate: Deterministic math, FluxFig 1-cell SystemCore/roboRIO fallback,
@@ -2041,6 +2047,431 @@ public class Tier2DeterministicSolversTest {
         sup.filterMechanismCommandVoltage(FaultSupervisor.JAM_CHANNEL_INTAKE, 8.0, 12.0, 35.0);
     assertEquals(
         8.0, freshPressOut, 1e-6, "Next press after release must command requested positive volts");
+  }
+
+  @Test
+  public void testRobotHeartbeatPacedMonotonicallyAcrossBackwardRtcJump() throws Exception {
+    Path tmpDir = Files.createTempDirectory("flux-trayrisk01-test");
+    Path hbFile = tmpDir.resolve("flux-robot-state");
+    try (Robot robot = new Robot(hbFile)) {
+      DriverStationSim.setFmsAttached(false);
+      DriverStationSim.setEnabled(false);
+      DriverStationSim.notifyNewData();
+
+      long initialWallMs = 1_795_000_000_000L;
+      robot.writeRobotStateHeartbeat(true, 10.0, initialWallMs);
+      String first = Files.readString(hbFile);
+      assertTrue(first.contains("EPOCH_MS=" + initialWallMs), "Initial heartbeat writes wall ms");
+
+      // Within 0.25 s FPGA interval: throttled even if wall clock changed
+      robot.writeRobotStateHeartbeat(false, 10.10, initialWallMs + 100L);
+      assertEquals(first, Files.readString(hbFile), "Heartbeat throttles inside 0.25 s FPGA window");
+
+      // Simulate a 10-minute backward RTC step once >= 0.25 s of monotonic FPGA time elapsed
+      long jumpedBackWallMs = initialWallMs - 600_000L;
+      robot.writeRobotStateHeartbeat(false, 10.30, jumpedBackWallMs);
+      String updated = Files.readString(hbFile);
+      assertTrue(
+          updated.contains("EPOCH_MS=" + jumpedBackWallMs),
+          "Backward RTC jump must NOT freeze /tmp/flux-robot-state heartbeat updates: " + updated);
+    } finally {
+      deleteTree(tmpDir);
+    }
+  }
+
+  @Test
+  public void testPitSystemCheckDualMotorShooterPerMotorLimitAndInvertedDriveFail() {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    RobotContainer container =
+        new RobotContainer(RobotIdentity.FUEL, Paths.get("src/main/deploy/configs"), true);
+    MechanismSpec shooterSpec = fig.getMechanismSpec("FUEL", "Shooter");
+    assertTrue(shooterSpec.followerMotorId() >= 0, "FUEL Shooter must have a follower motor");
+
+    // Healthy dual-Kraken Shooter: 55 A leader + 55 A follower = 110 A total (<= 60 A per motor)
+    MechanismIO healthyDualShooterIo =
+        new MechanismIO() {
+          private double targetRps = 0.0;
+
+          @Override
+          public void setVelocity(double velocityRPS) {
+            targetRps = velocityRPS;
+          }
+
+          @Override
+          public void stop() {
+            targetRps = 0.0;
+          }
+
+          @Override
+          public void updateInputs(MechanismIOInputs inputs) {
+            inputs.motorConnected = true;
+            inputs.velocityRPS = targetRps;
+            inputs.leaderStatorCurrentA = targetRps != 0.0 ? 55.0 : 0.0;
+            inputs.followerStatorCurrentA = targetRps != 0.0 ? 55.0 : 0.0;
+            inputs.statorCurrentA = inputs.leaderStatorCurrentA + inputs.followerStatorCurrentA;
+          }
+        };
+    VelocityMechanism healthyDualShooter =
+        new VelocityMechanism(healthyDualShooterIo, shooterSpec);
+    PitSystemCheckCmd dualPassCheck =
+        new PitSystemCheckCmd(
+            container.getDrive(),
+            List.of(),
+            List.of(new VelocityCheckTarget(healthyDualShooter, 25.0)),
+            10,
+            4,
+            () -> {});
+    dualPassCheck.initialize();
+    while (!dualPassCheck.isFinished()) {
+      dualPassCheck.execute();
+      container.getDrive().periodic();
+      healthyDualShooter.periodic();
+    }
+    dualPassCheck.end(false);
+    assertTrue(
+        dualPassCheck.hasPassed(),
+        "Dual-Kraken Shooter at 55 A/motor (110 A total) must PASS PitSystemCheckCmd: "
+            + dualPassCheck.getSummary());
+
+    // Overcurrent dual-Kraken Shooter: 63 A leader + 40 A follower (> 60 A on leader must FAIL)
+    MechanismIO overcurrentDualShooterIo =
+        new MechanismIO() {
+          private double targetRps = 0.0;
+
+          @Override
+          public void setVelocity(double velocityRPS) {
+            targetRps = velocityRPS;
+          }
+
+          @Override
+          public void stop() {
+            targetRps = 0.0;
+          }
+
+          @Override
+          public void updateInputs(MechanismIOInputs inputs) {
+            inputs.motorConnected = true;
+            inputs.velocityRPS = targetRps;
+            inputs.leaderStatorCurrentA = targetRps != 0.0 ? 63.0 : 0.0;
+            inputs.followerStatorCurrentA = targetRps != 0.0 ? 40.0 : 0.0;
+            inputs.statorCurrentA = inputs.leaderStatorCurrentA + inputs.followerStatorCurrentA;
+          }
+        };
+    VelocityMechanism overcurrentShooter =
+        new VelocityMechanism(overcurrentDualShooterIo, shooterSpec);
+    PitSystemCheckCmd dualFailCheck =
+        new PitSystemCheckCmd(
+            container.getDrive(),
+            List.of(),
+            List.of(new VelocityCheckTarget(overcurrentShooter, 25.0)),
+            10,
+            4,
+            () -> {});
+    dualFailCheck.initialize();
+    while (!dualFailCheck.isFinished()) {
+      dualFailCheck.execute();
+      container.getDrive().periodic();
+      overcurrentShooter.periodic();
+    }
+    dualFailCheck.end(false);
+    assertFalse(
+        dualFailCheck.hasPassed(),
+        "Dual-Kraken Shooter with leader at 63 A (> 60 A) must FAIL PitSystemCheckCmd");
+    assertTrue(
+        dualFailCheck.getFailedActuators().stream()
+            .anyMatch(s -> s.contains("Shooter") && s.contains("overcurrent")),
+        "Failure report must cite Shooter overcurrent: " + dualFailCheck.getFailedActuators());
+
+    // Inverted swerve corner (spins negative when commanded positive) must FAIL PitSystemCheckCmd
+    SwerveConfig cfg = SwerveConfig.fromFluxFig(fig, "FUEL");
+    ModuleIO invertedFlIo =
+        new ModuleIO() {
+          private double cmdVelRadPerSec = 0.0;
+          private Rotation2d turnAngle = Rotation2d.kZero;
+
+          @Override
+          public void setDriveVelocity(double velocityRadPerSec) {
+            cmdVelRadPerSec = velocityRadPerSec;
+          }
+
+          @Override
+          public void setTurnPosition(Rotation2d angle) {
+            turnAngle = angle;
+          }
+
+          @Override
+          public void stop() {
+            cmdVelRadPerSec = 0.0;
+          }
+
+          @Override
+          public void updateInputs(ModuleIOInputs inputs) {
+            inputs.driveConnected = true;
+            inputs.turnConnected = true;
+            inputs.turnPosition = turnAngle;
+            inputs.driveVelocityRadPerSec = -cmdVelRadPerSec; // Inverted drive polarity
+            inputs.driveStatorCurrentAmps = Math.abs(cmdVelRadPerSec) > 0.1 ? 12.0 : 0.0;
+            inputs.turnStatorCurrentAmps = 2.0;
+            inputs.odometryTimestamps = new double[] {0.02};
+            inputs.odometryDrivePositionsRad = new double[] {0.0};
+            inputs.odometryTurnPositions = new Rotation2d[] {turnAngle};
+          }
+        };
+    Drive invertedDrive =
+        new Drive(
+            cfg,
+            new GyroIO() {},
+            invertedFlIo,
+            new ModuleIOSim(cfg),
+            new ModuleIOSim(cfg),
+            new ModuleIOSim(cfg));
+    PitSystemCheckCmd invertedDriveCheck =
+        new PitSystemCheckCmd(invertedDrive, List.of(), List.of(), 10, 4, () -> {});
+    invertedDriveCheck.initialize();
+    while (!invertedDriveCheck.isFinished()) {
+      invertedDriveCheck.execute();
+      invertedDrive.periodic();
+    }
+    invertedDriveCheck.end(false);
+    assertFalse(
+        invertedDriveCheck.hasPassed(),
+        "Inverted swerve drive motor must FAIL PitSystemCheckCmd (never pass via Math.abs)");
+    assertTrue(
+        invertedDriveCheck.getFailedActuators().stream()
+            .anyMatch(s -> s.contains("DriveFL") && s.contains("inverted-direction")),
+        "Failure report must flag DriveFL inverted-direction: "
+            + invertedDriveCheck.getFailedActuators());
+  }
+
+  @Test
+  public void testDriveSetPoseNeverSnapsBackUnderQueued250HzYawSamplesAndOverridesPreMatch() {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    SwerveConfig cfg = SwerveConfig.fromFluxFig(fig, "FUEL");
+
+    // Simulate a Pigeon 2 whose 250 Hz queue continues streaming pre-reset 73 deg yaw samples
+    Rotation2d[] hardwareYaw = {Rotation2d.fromDegrees(73.0)};
+    double[] sampleTs = {1.000};
+    GyroIO queuedPigeonIo =
+        new GyroIO() {
+          @Override
+          public void updateInputs(GyroIOInputs inputs) {
+            inputs.connected = true;
+            inputs.yawPosition = hardwareYaw[0];
+            double t = sampleTs[0];
+            sampleTs[0] += 0.020;
+            inputs.odometryYawTimestamps =
+                new double[] {t, t + 0.004, t + 0.008, t + 0.012, t + 0.016};
+            inputs.odometryYawPositions =
+                new Rotation2d[] {
+                  hardwareYaw[0], hardwareYaw[0], hardwareYaw[0], hardwareYaw[0], hardwareYaw[0]
+                };
+          }
+        };
+
+    Drive drive =
+        new Drive(
+            cfg,
+            queuedPigeonIo,
+            new ModuleIOSim(cfg),
+            new ModuleIOSim(cfg),
+            new ModuleIOSim(cfg),
+            new ModuleIOSim(cfg));
+
+    // Establish initial 73 deg raw gyro state on the pose estimator
+    drive.periodic();
+    assertEquals(73.0, drive.getPose().getRotation().getDegrees(), 0.5);
+
+    // Driver presses Y (reset heading to 0 deg): queued 73 deg samples must NOT snap heading back
+    drive.setPose(new Pose2d(3.4, 5.2, Rotation2d.kZero));
+    assertEquals(0.0, drive.getPose().getRotation().getDegrees(), 1e-4);
+
+    for (int tick = 0; tick < 5; tick++) {
+      drive.periodic();
+      assertEquals(
+          0.0,
+          drive.getPose().getRotation().getDegrees(),
+          0.5,
+          "Queued 250 Hz raw yaw samples must never snap heading back after Drive.setPose()");
+    }
+
+    // Physical +5 deg rotation (73 -> 78 deg raw) must advance estimated heading to +5 deg
+    hardwareYaw[0] = Rotation2d.fromDegrees(78.0);
+    drive.periodic();
+    assertEquals(5.0, drive.getPose().getRotation().getDegrees(), 0.5);
+
+    // Explicit Disabled Y heading reset must prevent PreMatchCalibrator from overwriting it
+    RobotContainer container =
+        new RobotContainer(RobotIdentity.FUEL, Paths.get("src/main/deploy/configs"), true);
+    FieldPositions.setAllianceOverride(false);
+    try {
+      container.getDrive().setPose(new Pose2d(2.0, 3.0, Rotation2d.fromDegrees(90.0)));
+      container.resetFieldHeading();
+      assertTrue(container.getPreMatchCalibrator().isManualHeadingOverrideActive());
+      assertEquals(0.0, container.getDrive().getPose().getRotation().getDegrees(), 1e-4);
+
+      for (int i = 0; i < PreMatchCalibrator.REQUIRED_SAMPLES + 10; i++) {
+        container
+            .getPreMatchCalibrator()
+            .addObservation(new Pose2d(2.0, 3.0, Rotation2d.fromDegrees(120.0)));
+      }
+      assertEquals(
+          0.0,
+          container.getDrive().getPose().getRotation().getDegrees(),
+          1e-4,
+          "PreMatchCalibrator must not overwrite an explicit manual Y heading reset");
+    } finally {
+      FieldPositions.setAllianceOverride(null);
+    }
+  }
+
+  @Test
+  public void testVisionPhotonVisionAmbiguityRejectionTargetsUsedAvgDistStdDevFloorAndSingleTagYaw() {
+    List<TargetCorner> corners =
+        List.of(
+            new TargetCorner(0.0, 0.0),
+            new TargetCorner(10.0, 0.0),
+            new TargetCorner(10.0, 10.0),
+            new TargetCorner(0.0, 10.0));
+
+    // 1) VisionIOPhotonVision.buildPoseObservation rejects -1.0 single-tag ambiguity sentinel
+    PhotonTrackedTarget invalidAmbTag =
+        new PhotonTrackedTarget(
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            7,
+            -1,
+            0.0f,
+            new Transform3d(new Translation3d(2.0, 0.0, 0.0), Rotation3d.kZero),
+            new Transform3d(),
+            -1.0,
+            corners,
+            corners);
+    EstimatedRobotPose invalidSingleEst =
+        new EstimatedRobotPose(
+            new Pose3d(3.0, 4.0, 0.0, Rotation3d.kZero),
+            1.5,
+            List.of(invalidAmbTag),
+            PoseStrategy.LOWEST_AMBIGUITY);
+    assertTrue(
+        VisionIOPhotonVision.buildPoseObservation(invalidSingleEst).isEmpty(),
+        "Single-tag PhotonVision observation with -1.0 ambiguity must be rejected");
+
+    // 2) VisionIOPhotonVision.buildPoseObservation averages distance strictly over est.targetsUsed
+    PhotonTrackedTarget tagA =
+        new PhotonTrackedTarget(
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            7,
+            -1,
+            0.0f,
+            new Transform3d(new Translation3d(2.0, 0.0, 0.0), Rotation3d.kZero),
+            new Transform3d(),
+            0.08,
+            corners,
+            corners);
+    PhotonTrackedTarget tagB =
+        new PhotonTrackedTarget(
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            8,
+            -1,
+            0.0f,
+            new Transform3d(new Translation3d(4.0, 0.0, 0.0), Rotation3d.kZero),
+            new Transform3d(),
+            0.12,
+            corners,
+            corners);
+    EstimatedRobotPose multiTagEst =
+        new EstimatedRobotPose(
+            new Pose3d(3.0, 4.0, 0.0, Rotation3d.kZero),
+            2.0,
+            List.of(tagA, tagB),
+            PoseStrategy.MULTI_TAG_PNP_ON_COPROCESSOR);
+    Optional<PoseObservation> multiObsOpt = VisionIOPhotonVision.buildPoseObservation(multiTagEst);
+    assertTrue(multiObsOpt.isPresent());
+    assertEquals(2, multiObsOpt.get().tagCount());
+    assertEquals(3.0, multiObsOpt.get().avgTagDistMeters(), 1e-6);
+    assertEquals(0.0, multiObsOpt.get().ambiguity(), 1e-6);
+
+    // 3) Vision.periodic() rejects -1.0 ambiguity, floors 0.0 dist std-dev, and sets single-tag
+    //    PHOTONVISION angularStdDev = +Infinity while keeping multi-tag angularStdDev finite
+    CameraSpec camSpec = new CameraSpec("FUEL", "OV9281-2", 0, 0.2, 0.0, 0.5, 0.0, -10.0, 0.0, 1.0);
+    double nowSec = Timer.getFPGATimestamp();
+    List<PoseObservation> pendingObs = new ArrayList<>();
+    VisionIO stubIo =
+        new VisionIO() {
+          @Override
+          public void updateInputs(VisionIOInputs inputs) {
+            inputs.connected = true;
+            inputs.framesDrainedThisCycle = pendingObs.size();
+            inputs.poseObservations = pendingObs.toArray(new PoseObservation[0]);
+            inputs.tagIds = new int[] {7};
+          }
+        };
+    List<edu.wpi.first.math.Matrix<edu.wpi.first.math.numbers.N3, edu.wpi.first.math.numbers.N1>>
+        acceptedStdDevs = new ArrayList<>();
+    Vision vision =
+        new Vision(
+            (pose, ts, stdDevs) -> acceptedStdDevs.add(stdDevs),
+            new FaultSupervisor(1),
+            new CameraSpec[] {camSpec},
+            stubIo);
+
+    // Negative ambiguity must be rejected in Vision even if injected directly
+    pendingObs.add(
+        new PoseObservation(
+            nowSec,
+            new Pose3d(3.0, 4.0, 0.0, Rotation3d.kZero),
+            -1.0,
+            1,
+            2.0,
+            ObservationType.PHOTONVISION));
+    vision.periodic();
+    assertEquals(0, acceptedStdDevs.size(), "Vision must reject ambiguity < 0.0");
+
+    // Single-tag PHOTONVISION at 0.0 m distance: linearStdDev floored, angularStdDev == +Infinity
+    pendingObs.clear();
+    pendingObs.add(
+        new PoseObservation(
+            nowSec,
+            new Pose3d(3.0, 4.0, 0.0, Rotation3d.kZero),
+            0.05,
+            1,
+            0.0,
+            ObservationType.PHOTONVISION));
+    vision.periodic();
+    assertEquals(1, acceptedStdDevs.size());
+    assertTrue(
+        acceptedStdDevs.get(0).get(0, 0) >= Vision.MIN_LINEAR_STD_DEV_METERS,
+        "Zero-distance vision observation must floor linearStdDev (got "
+            + acceptedStdDevs.get(0).get(0, 0)
+            + ")");
+    assertTrue(
+        Double.isInfinite(acceptedStdDevs.get(0).get(2, 0)),
+        "Single-tag PHOTONVISION observation must set angularStdDev = +Infinity");
+
+    // Multi-tag PHOTONVISION keeps finite angularStdDev >= MIN_ANGULAR_STD_DEV_RAD
+    pendingObs.clear();
+    pendingObs.add(
+        new PoseObservation(
+            nowSec,
+            new Pose3d(3.0, 4.0, 0.0, Rotation3d.kZero),
+            0.0,
+            2,
+            2.5,
+            ObservationType.PHOTONVISION));
+    vision.periodic();
+    assertEquals(2, acceptedStdDevs.size());
+    assertTrue(
+        Double.isFinite(acceptedStdDevs.get(1).get(2, 0))
+            && acceptedStdDevs.get(1).get(2, 0) >= Vision.MIN_ANGULAR_STD_DEV_RAD,
+        "Multi-tag PHOTONVISION must keep finite floored angularStdDev");
   }
 
   private static void deleteTree(Path root) {

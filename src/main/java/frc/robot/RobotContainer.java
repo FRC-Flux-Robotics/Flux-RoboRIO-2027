@@ -403,6 +403,9 @@ public class RobotContainer {
   /** Resets field-oriented heading to alliance forward while preserving current X/Y translation. */
   public void resetFieldHeading() {
     drive.setPose(new Pose2d(drive.getPose().getTranslation(), FieldPositions.operatorForward()));
+    if (preMatchCalibrator != null) {
+      preMatchCalibrator.onManualHeadingReset();
+    }
   }
 
   /** Resets the 6-mechanism superstructure to {@link State#IDLE} across mode transitions. */
@@ -428,6 +431,7 @@ public class RobotContainer {
     drive.warmup();
     shotCalculator.calculate(
         drive.getPose(), new ChassisSpeeds(), FieldPositions.forAlliance(HUB_TARGET_METERS));
+    superstructure.periodic();
     Logger.recordOutput(
         "Superstructure/MechanismPoses3d", new Pose3d[] {Pose3d.kZero, Pose3d.kZero});
   }

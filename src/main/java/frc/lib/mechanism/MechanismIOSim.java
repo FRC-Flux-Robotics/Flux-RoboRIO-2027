@@ -192,7 +192,10 @@ public class MechanismIOSim implements MechanismIO {
 
     inputs.positionRotations = readPositionRotations();
     inputs.velocityRPS = readVelocityRps();
-    inputs.statorCurrentA = Math.min(spec.statorLimitAmps(), Math.abs(rawCurrentA));
+    double perMotorStator = Math.min(spec.statorLimitAmps(), Math.abs(rawCurrentA));
+    inputs.leaderStatorCurrentA = perMotorStator;
+    inputs.followerStatorCurrentA = (spec.followerMotorId() >= 0) ? perMotorStator : 0.0;
+    inputs.statorCurrentA = perMotorStator;
     inputs.supplyCurrentA =
         Math.min(
             spec.supplyLimitAmps(), inputs.statorCurrentA * (Math.abs(appliedVolts) / 12.0));

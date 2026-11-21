@@ -298,13 +298,13 @@ public class Drive extends SubsystemBase {
   }
 
   public void setPose(Pose2d pose) {
-    gyroIo.setYaw(pose.getRotation());
-    rawGyroRotation = pose.getRotation();
     SwerveModulePosition[] currentPositions = new SwerveModulePosition[4];
     for (int i = 0; i < 4; i++) {
       currentPositions[i] = modules[i].getPosition();
       lastModulePositions[i] = currentPositions[i];
     }
+    // Keep rawGyroRotation continuous and let SwerveDrivePoseEstimator hold the gyro offset so
+    // already-queued 250 Hz Pigeon 2 yaw samples never snap heading back after a reset.
     poseEstimator.resetPosition(rawGyroRotation, currentPositions, pose);
   }
 

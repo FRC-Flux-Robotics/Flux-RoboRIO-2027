@@ -42,7 +42,8 @@ public class Robot extends LoggedRobot {
   /** Atomic robot-side lockout state file checked by {@code FluxTray} SSH pre-flight guards. */
   public static final Path DEFAULT_ROBOT_STATE_FILE = Path.of("/tmp/flux-robot-state");
 
-  private static final long ROBOT_STATE_HEARTBEAT_INTERVAL_MS = 1000L;
+  /** Monotonic 250 ms pacing interval for {@code /tmp/flux-robot-state} heartbeat writes. */
+  public static final double ROBOT_STATE_HEARTBEAT_INTERVAL_SEC = 0.25;
 
   private static boolean loggerStarted = false;
 
@@ -55,7 +56,7 @@ public class Robot extends LoggedRobot {
   private String bootTimestampIso = "";
   private boolean lastHeartbeatEnabled = false;
   private boolean lastHeartbeatFms = false;
-  private long lastHeartbeatEpochMs = 0L;
+  private double lastHeartbeatFpgaSec = Double.NEGATIVE_INFINITY;
   private Boolean lastJoystickWarningSilenced = null;
 
   public Robot() {
@@ -144,13 +145,22 @@ public class Robot extends LoggedRobot {
   }
 
   private void writeRobotStateHeartbeat(boolean force) {
+    writeRobotStateHeartbeat(force, Timer.getFPGATimestamp(), System.currentTimeMillis());
+  }
+
+  /**
+   * Writes atomic {@code /tmp/flux-robot-state} paced by monotonic FPGA time so backward RTC steps
+   * never freeze the heartbeat, while still stamping wall-clock {@code EPOCH_MS}.
+   */
+  public void writeRobotStateHeartbeat(boolean force, double fpgaTimestampSec, long wallEpochMs) {
     boolean enabled = DriverStation.isEnabled();
     boolean fms = DriverStation.isFMSAttached();
-    long nowMs = System.currentTimeMillis();
+    double elapsedFpgaSec = fpgaTimestampSec - lastHeartbeatFpgaSec;
     if (!force
         && enabled == lastHeartbeatEnabled
         && fms == lastHeartbeatFms
-        && (nowMs - lastHeartbeatEpochMs) < ROBOT_STATE_HEARTBEAT_INTERVAL_MS) {
+        && elapsedFpgaSec >= 0.0
+        && elapsedFpgaSec < ROBOT_STATE_HEARTBEAT_INTERVAL_SEC) {
       return;
     }
     try {
@@ -158,12 +168,12 @@ public class Robot extends LoggedRobot {
           robotStateFile,
           enabled,
           fms,
-          nowMs,
+          wallEpochMs,
           identity != null ? identity.name() : "UNKNOWN",
           ProcessHandle.current().pid());
       lastHeartbeatEnabled = enabled;
       lastHeartbeatFms = fms;
-      lastHeartbeatEpochMs = nowMs;
+      lastHeartbeatFpgaSec = fpgaTimestampSec;
     } catch (IOException ignored) {
     }
   }

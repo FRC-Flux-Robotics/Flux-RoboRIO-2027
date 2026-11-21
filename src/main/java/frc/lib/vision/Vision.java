@@ -33,6 +33,9 @@ public class Vision extends SubsystemBase {
   public static final double FIELD_MARGIN_METERS = 0.50;
   public static final double LINEAR_STD_DEV_BASELINE = 0.01;
   public static final double ANGULAR_STD_DEV_BASELINE = 0.06;
+  public static final double MIN_AVG_TAG_DIST_METERS = 0.25;
+  public static final double MIN_LINEAR_STD_DEV_METERS = 0.01;
+  public static final double MIN_ANGULAR_STD_DEV_RAD = 0.05;
   public static final double QUARANTINE_STDDEV_MULTIPLIER = 5.0;
 
   /** Spectrum 3847 + 6328-2026 vision motion and timing rejection gates. */
@@ -172,7 +175,8 @@ public class Vision extends SubsystemBase {
 
         Pose2d pose2d = obs.robotPose().toPose2d();
         boolean reject =
-            obs.tagCount() == 0
+            obs.tagCount() <= 0
+                || obs.ambiguity() < 0.0
                 || (obs.tagCount() == 1 && obs.ambiguity() > MAX_AMBIGUITY)
                 || Math.abs(obs.robotPose().getZ()) > MAX_Z_ERROR_METERS
                 || !FieldPositions.isInsideField(
@@ -188,12 +192,19 @@ public class Vision extends SubsystemBase {
         latestAcceptedPose = pose2d;
 
         double tagCount = Math.max(1, obs.tagCount());
-        double stdDevFactor = Math.pow(obs.avgTagDistMeters(), 2.0) / (tagCount * tagCount);
-        double linearStdDev = LINEAR_STD_DEV_BASELINE * stdDevFactor * camScalar;
+        double clampedDist = Math.max(MIN_AVG_TAG_DIST_METERS, obs.avgTagDistMeters());
+        double stdDevFactor = (clampedDist * clampedDist) / (tagCount * tagCount);
+        double linearStdDev =
+            Math.max(
+                MIN_LINEAR_STD_DEV_METERS, LINEAR_STD_DEV_BASELINE * stdDevFactor * camScalar);
+        boolean trustYaw =
+            obs.type() != ObservationType.MEGATAG_2
+                && !(obs.type() == ObservationType.PHOTONVISION && obs.tagCount() <= 1);
         double angularStdDev =
-            (obs.type() == ObservationType.MEGATAG_2)
-                ? Double.POSITIVE_INFINITY
-                : ANGULAR_STD_DEV_BASELINE * stdDevFactor * camScalar;
+            trustYaw
+                ? Math.max(
+                    MIN_ANGULAR_STD_DEV_RAD, ANGULAR_STD_DEV_BASELINE * stdDevFactor * camScalar)
+                : Double.POSITIVE_INFINITY;
 
         consumer.accept(
             pose2d, obsTs, VecBuilder.fill(linearStdDev, linearStdDev, angularStdDev));

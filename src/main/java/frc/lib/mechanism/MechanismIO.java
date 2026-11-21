@@ -10,6 +10,8 @@ public interface MechanismIO {
     public double positionRotations = 0.0;
     public double velocityRPS = 0.0;
     public double statorCurrentA = 0.0;
+    public double leaderStatorCurrentA = 0.0;
+    public double followerStatorCurrentA = 0.0;
     public double supplyCurrentA = 0.0;
     public double appliedVoltage = 0.0;
     public double tempCelsius = 0.0;
@@ -20,6 +22,8 @@ public interface MechanismIO {
       table.put("PositionRotations", positionRotations);
       table.put("VelocityRPS", velocityRPS);
       table.put("StatorCurrentA", statorCurrentA);
+      table.put("LeaderStatorCurrentA", leaderStatorCurrentA);
+      table.put("FollowerStatorCurrentA", followerStatorCurrentA);
       table.put("SupplyCurrentA", supplyCurrentA);
       table.put("AppliedVoltage", appliedVoltage);
       table.put("TempCelsius", tempCelsius);
@@ -31,6 +35,8 @@ public interface MechanismIO {
       positionRotations = table.get("PositionRotations", positionRotations);
       velocityRPS = table.get("VelocityRPS", velocityRPS);
       statorCurrentA = table.get("StatorCurrentA", statorCurrentA);
+      leaderStatorCurrentA = table.get("LeaderStatorCurrentA", leaderStatorCurrentA);
+      followerStatorCurrentA = table.get("FollowerStatorCurrentA", followerStatorCurrentA);
       supplyCurrentA = table.get("SupplyCurrentA", supplyCurrentA);
       appliedVoltage = table.get("AppliedVoltage", appliedVoltage);
       tempCelsius = table.get("TempCelsius", tempCelsius);

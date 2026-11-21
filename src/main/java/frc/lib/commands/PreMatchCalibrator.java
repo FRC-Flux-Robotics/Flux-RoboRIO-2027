@@ -37,6 +37,7 @@ public class PreMatchCalibrator {
   private Pose2d expectedStartPose = Pose2d.kZero;
   private boolean gyroSeeded = false;
   private boolean readyToPlay = false;
+  private boolean manualHeadingOverrideActive = false;
   private double poseErrorMeters = 99.0;
   private double headingErrorDeg = 180.0;
   private int lastConsumedAcceptedCount = 0;
@@ -51,8 +52,26 @@ public class PreMatchCalibrator {
     this.expectedStartPose = expectedStartPose;
   }
 
+  /** Prevents passive vision reseeding from overwriting an explicit driver heading reset. */
+  public void onManualHeadingReset() {
+    manualHeadingOverrideActive = true;
+    window.clear();
+  }
+
+  public void clearManualHeadingReset() {
+    manualHeadingOverrideActive = false;
+  }
+
+  public boolean isManualHeadingOverrideActive() {
+    return manualHeadingOverrideActive;
+  }
+
   /** Runs every loop during {@code disabledPeriodic()} to seed the gyro and audit start pose. */
   public void updateDisabled() {
+    if (manualHeadingOverrideActive) {
+      publishTelemetry();
+      return;
+    }
     var speeds = drive.getChassisSpeeds();
     boolean stationary =
         Math.hypot(speeds.vxMetersPerSecond, speeds.vyMetersPerSecond)
@@ -69,6 +88,9 @@ public class PreMatchCalibrator {
 
   /** Records a stationary MegaTag1 observation and updates the circular median seed once full. */
   public void addObservation(Pose2d observation) {
+    if (manualHeadingOverrideActive) {
+      return;
+    }
     if (window.size() >= REQUIRED_SAMPLES) {
       window.removeFirst();
     }
@@ -119,6 +141,7 @@ public class PreMatchCalibrator {
     Logger.recordOutput("PreMatch/PoseErrorMeters", poseErrorMeters);
     Logger.recordOutput("PreMatch/HeadingErrorDeg", headingErrorDeg);
     Logger.recordOutput("PreMatch/ReadyToPlay", readyToPlay);
+    Logger.recordOutput("PreMatch/ManualHeadingOverride", manualHeadingOverrideActive);
   }
 
   public boolean isGyroSeeded() {

@@ -6,7 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.ctre.phoenix6.CANBus;
 import com.ctre.phoenix6.configs.CANcoderConfiguration;
+import com.ctre.phoenix6.configs.Pigeon2Configuration;
 import com.ctre.phoenix6.configs.TalonFXConfiguration;
+import com.ctre.phoenix6.hardware.Pigeon2;
 import com.ctre.phoenix6.hardware.TalonFX;
 import com.ctre.phoenix6.signals.InvertedValue;
 import com.ctre.phoenix6.signals.NeutralModeValue;
@@ -678,6 +680,52 @@ public class Tier3CtreSimHardwareTest {
           gyroInputs.odometryYawTimestamps.length,
           gyroInputs.odometryYawPositions.length,
           "GyroIOPigeon2 odometryYawTimestamps length must match yaw position samples");
+    }
+  }
+
+  @Test
+  public void testGyroIoPigeon2PreservesMountPoseAndGyroTrimOnBoot() {
+    // Pre-flash a non-default Tuner X MountPose & GyroTrim onto Pigeon 2 ID 56
+    Pigeon2Configuration preFlashed = new Pigeon2Configuration();
+    preFlashed.MountPose.MountPoseYaw = 90.0;
+    preFlashed.MountPose.MountPosePitch = 12.5;
+    preFlashed.MountPose.MountPoseRoll = -7.25;
+    preFlashed.GyroTrim.GyroScalarZ = 1.75;
+
+    try (Pigeon2 preFlashDevice = new Pigeon2(56, new CANBus("rio"))) {
+      PhoenixUtil.tryUntilOk(
+          "PreFlash-Pigeon2-56",
+          () -> preFlashDevice.getConfigurator().apply(preFlashed, 0.100),
+          5);
+    }
+
+    // Booting GyroIOPigeon2 must preserve flash MountPose and GyroTrim without factory-wiping
+    try (GyroIOPigeon2 gyroIo = new GyroIOPigeon2(56, "rio")) {
+      Pigeon2Configuration afterBoot = new Pigeon2Configuration();
+      PhoenixUtil.tryUntilOk(
+          "Readback-Pigeon2-56",
+          () -> gyroIo.getPigeon().getConfigurator().refresh(afterBoot, 0.100),
+          5);
+      assertEquals(
+          90.0,
+          afterBoot.MountPose.MountPoseYaw,
+          0.1,
+          "GyroIOPigeon2 must preserve Tuner X flash MountPoseYaw on boot");
+      assertEquals(
+          12.5,
+          afterBoot.MountPose.MountPosePitch,
+          0.1,
+          "GyroIOPigeon2 must preserve Tuner X flash MountPosePitch on boot");
+      assertEquals(
+          -7.25,
+          afterBoot.MountPose.MountPoseRoll,
+          0.1,
+          "GyroIOPigeon2 must preserve Tuner X flash MountPoseRoll on boot");
+      assertEquals(
+          1.75,
+          afterBoot.GyroTrim.GyroScalarZ,
+          0.05,
+          "GyroIOPigeon2 must preserve Tuner X flash GyroScalarZ trim on boot");
     }
   }
 }

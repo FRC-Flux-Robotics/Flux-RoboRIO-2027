@@ -64,15 +64,10 @@ public class VisionIOPhotonVision implements VisionIO {
         continue;
       }
 
-      List<PhotonTrackedTarget> targets = result.getTargets();
-      double totalDist = 0.0;
-      double minAmbiguity = 1.0;
-      for (PhotonTrackedTarget target : targets) {
+      for (PhotonTrackedTarget target : result.getTargets()) {
         int id = target.getFiducialId();
         seenTagIds.add(id);
         double dist = target.getBestCameraToTarget().getTranslation().getNorm();
-        totalDist += dist;
-        minAmbiguity = Math.min(minAmbiguity, target.getPoseAmbiguity());
         tagObsList.add(
             new RawTagObservation(
                 id,
@@ -84,24 +79,51 @@ public class VisionIOPhotonVision implements VisionIO {
 
       Optional<EstimatedRobotPose> estOpt = poseEstimator.update(result);
       if (estOpt.isPresent()) {
-        EstimatedRobotPose est = estOpt.get();
-        Pose3d robotPose = est.estimatedPose;
-        int tagCount = est.targetsUsed.size();
-        double avgDist = tagCount > 0 ? totalDist / tagCount : 0.0;
-        double ambiguity = tagCount > 1 ? 0.0 : minAmbiguity;
-        poseObsList.add(
-            new PoseObservation(
-                est.timestampSeconds,
-                robotPose,
-                ambiguity,
-                tagCount,
-                avgDist,
-                ObservationType.PHOTONVISION));
+        buildPoseObservation(estOpt.get()).ifPresent(poseObsList::add);
       }
     }
 
     inputs.poseObservations = poseObsList.toArray(new PoseObservation[0]);
     inputs.tagObservations = tagObsList.toArray(new RawTagObservation[0]);
     inputs.tagIds = seenTagIds.stream().mapToInt(Integer::intValue).sorted().toArray();
+  }
+
+  /**
+   * Builds a {@link PoseObservation} strictly from {@code est.targetsUsed}, rejecting invalid
+   * single-tag ambiguity sentinels ({@code < 0.0} or non-finite) so bad solves never bypass the
+   * ambiguity gate.
+   */
+  public static Optional<PoseObservation> buildPoseObservation(EstimatedRobotPose est) {
+    if (est == null || est.estimatedPose == null || est.targetsUsed == null || est.targetsUsed.isEmpty()) {
+      return Optional.empty();
+    }
+    int tagCount = est.targetsUsed.size();
+    double totalDist = 0.0;
+    for (PhotonTrackedTarget target : est.targetsUsed) {
+      double dist = target.getBestCameraToTarget().getTranslation().getNorm();
+      if (!Double.isFinite(dist) || dist < 0.0) {
+        return Optional.empty();
+      }
+      totalDist += dist;
+    }
+    double avgDist = totalDist / tagCount;
+    double ambiguity;
+    if (tagCount > 1) {
+      ambiguity = 0.0;
+    } else {
+      double rawAmbiguity = est.targetsUsed.get(0).getPoseAmbiguity();
+      if (!Double.isFinite(rawAmbiguity) || rawAmbiguity < 0.0) {
+        return Optional.empty();
+      }
+      ambiguity = rawAmbiguity;
+    }
+    return Optional.of(
+        new PoseObservation(
+            est.timestampSeconds,
+            est.estimatedPose,
+            ambiguity,
+            tagCount,
+            avgDist,
+            ObservationType.PHOTONVISION));
   }
 }

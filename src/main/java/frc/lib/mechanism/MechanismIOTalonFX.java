@@ -292,9 +292,12 @@ public class MechanismIOTalonFX implements MechanismIO, AutoCloseable {
   public void updateInputs(MechanismIOInputs inputs) {
     inputs.positionRotations = position.getValueAsDouble();
     inputs.velocityRPS = velocity.getValueAsDouble();
-    inputs.statorCurrentA =
-        statorCurrent.getValueAsDouble()
-            + (followerStatorCurrent != null ? followerStatorCurrent.getValueAsDouble() : 0.0);
+    double leaderStator = statorCurrent.getValueAsDouble();
+    double followerStator =
+        followerStatorCurrent != null ? followerStatorCurrent.getValueAsDouble() : 0.0;
+    inputs.leaderStatorCurrentA = leaderStator;
+    inputs.followerStatorCurrentA = followerStator;
+    inputs.statorCurrentA = leaderStator + followerStator;
     inputs.supplyCurrentA =
         supplyCurrent.getValueAsDouble()
             + (followerSupplyCurrent != null ? followerSupplyCurrent.getValueAsDouble() : 0.0);

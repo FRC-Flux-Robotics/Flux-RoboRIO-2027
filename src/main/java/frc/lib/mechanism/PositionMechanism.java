@@ -99,6 +99,17 @@ public class PositionMechanism extends SubsystemBase {
     return inputs.statorCurrentA;
   }
 
+  /** Returns peak per-motor stator current so dual-motor mechanisms are checked per motor. */
+  public double getMaxMotorStatorCurrentAmps() {
+    double leader = Math.abs(inputs.leaderStatorCurrentA);
+    double follower = Math.abs(inputs.followerStatorCurrentA);
+    if (leader > 0.0 || follower > 0.0) {
+      return Math.max(leader, follower);
+    }
+    int motorCount = (spec.followerMotorId() >= 0) ? 2 : 1;
+    return Math.abs(inputs.statorCurrentA) / motorCount;
+  }
+
   public double getSupplyCurrentAmps() {
     return inputs.supplyCurrentA;
   }

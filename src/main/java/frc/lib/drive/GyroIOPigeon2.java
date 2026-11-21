@@ -3,7 +3,6 @@ package frc.lib.drive;
 import com.ctre.phoenix6.BaseStatusSignal;
 import com.ctre.phoenix6.CANBus;
 import com.ctre.phoenix6.StatusSignal;
-import com.ctre.phoenix6.configs.Pigeon2Configuration;
 import com.ctre.phoenix6.hardware.ParentDevice;
 import com.ctre.phoenix6.hardware.Pigeon2;
 import edu.wpi.first.math.geometry.Rotation2d;
@@ -36,11 +35,7 @@ public class GyroIOPigeon2 implements GyroIO, AutoCloseable {
 
   public GyroIOPigeon2(int pigeonId, String canBusName) {
     pigeon = new Pigeon2(pigeonId, new CANBus(canBusName));
-    Pigeon2Configuration cfg = new Pigeon2Configuration();
-    PhoenixUtil.tryUntilOk(
-        "Gyro-Pigeon2-" + pigeonId,
-        () -> pigeon.getConfigurator().apply(cfg, PhoenixUtil.DEFAULT_CAN_CALL_TIMEOUT_SECONDS),
-        5);
+    // Preserve Tuner X flash MountPose and GyroTrim calibration (do not apply blank Pigeon2Configuration).
     pigeon.setYaw(0.0);
 
     yaw = pigeon.getYaw();

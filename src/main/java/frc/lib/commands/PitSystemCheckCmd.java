@@ -59,6 +59,7 @@ public class PitSystemCheckCmd extends Command {
   private boolean stepConnected = false;
   private boolean stepEverDisconnected = false;
   private double stepPeakSpeed = 0.0;
+  private double stepReverseSpeed = 0.0;
   private double stepPeakStatorAmps = 0.0;
   private double stepStartPosRot = 0.0;
   private double stepMaxDisplacementRot = 0.0;
@@ -201,7 +202,14 @@ public class PitSystemCheckCmd extends Command {
       String label = (stepIdx < CORNER_NAMES.length) ? CORNER_NAMES[stepIdx] : "Drive" + stepIdx;
       Logger.recordOutput("PitCheck/ActiveStep", label);
       if (activePhase) {
-        drive.runModuleTest(stepIdx, new SwerveModuleState(1.2, Rotation2d.fromDegrees(45.0)));
+        SwerveModuleState cmd = new SwerveModuleState(1.2, Rotation2d.fromDegrees(45.0));
+        drive.runModuleTest(stepIdx, cmd);
+        if (Math.abs(cmd.speedMetersPerSecond) >= 0.05) {
+          double signedSpeed =
+              drive.getModuleVelocityMps(stepIdx) * Math.signum(cmd.speedMetersPerSecond);
+          stepPeakSpeed = Math.max(stepPeakSpeed, signedSpeed);
+          stepReverseSpeed = Math.max(stepReverseSpeed, -signedSpeed);
+        }
       } else {
         drive.stop();
       }
@@ -212,7 +220,6 @@ public class PitSystemCheckCmd extends Command {
           stepEverDisconnected = true;
         }
       }
-      stepPeakSpeed = Math.max(stepPeakSpeed, Math.abs(drive.getModuleVelocityMps(stepIdx)));
       double cornerStator =
           Math.max(
               Math.abs(drive.getModuleDriveStatorCurrentAmps(stepIdx)),
@@ -225,6 +232,7 @@ public class PitSystemCheckCmd extends Command {
             label,
             stepConnected && !stepEverDisconnected,
             stepPeakSpeed >= MIN_SWERVE_SPEED_MPS,
+            stepReverseSpeed >= MIN_SWERVE_SPEED_MPS,
             stepPeakStatorAmps);
       }
     } else if (stepIdx < cornerCount + posCount) {
@@ -250,14 +258,15 @@ public class PitSystemCheckCmd extends Command {
       stepMaxDisplacementRot =
           Math.max(stepMaxDisplacementRot, Math.abs(pm.getPosition() - stepStartPosRot));
       stepPeakVelRps = Math.max(stepPeakVelRps, Math.abs(pm.getVelocity()));
-      stepPeakStatorAmps = Math.max(stepPeakStatorAmps, Math.abs(pm.getStatorCurrentAmps()));
+      stepPeakStatorAmps = Math.max(stepPeakStatorAmps, pm.getMaxMotorStatorCurrentAmps());
 
       if (localLoop == loopsPerStep) {
         pm.stop();
         boolean moved =
             stepMaxDisplacementRot >= MIN_POSITION_DELTA_ROT
                 || stepPeakVelRps >= MIN_POSITION_VELOCITY_RPS;
-        evaluateStep(label, stepConnected && !stepEverDisconnected, moved, stepPeakStatorAmps);
+        evaluateStep(
+            label, stepConnected && !stepEverDisconnected, moved, false, stepPeakStatorAmps);
       }
     } else {
       VelocityCheckTarget target = velocityTargets.get(stepIdx - cornerCount - posCount);
@@ -278,7 +287,8 @@ public class PitSystemCheckCmd extends Command {
       }
       double signedVel = vm.getVelocity() * Math.signum(target.targetRps());
       stepPeakSpeed = Math.max(stepPeakSpeed, signedVel);
-      stepPeakStatorAmps = Math.max(stepPeakStatorAmps, Math.abs(vm.getStatorCurrentAmps()));
+      stepReverseSpeed = Math.max(stepReverseSpeed, -signedVel);
+      stepPeakStatorAmps = Math.max(stepPeakStatorAmps, vm.getMaxMotorStatorCurrentAmps());
 
       if (localLoop == loopsPerStep) {
         vm.stop();
@@ -287,13 +297,18 @@ public class PitSystemCheckCmd extends Command {
             label,
             stepConnected && !stepEverDisconnected,
             stepPeakSpeed >= minExpectedRps,
+            stepReverseSpeed >= minExpectedRps,
             stepPeakStatorAmps);
       }
     }
   }
 
   private void evaluateStep(
-      String label, boolean connectedOk, boolean motionOk, double peakStatorAmps) {
+      String label,
+      boolean connectedOk,
+      boolean motionOk,
+      boolean invertedMotion,
+      double peakStatorAmps) {
     completedSteps++;
     boolean currentOk = peakStatorAmps <= MAX_SAFE_STATOR_AMPS;
     boolean stepPassed = connectedOk && motionOk && currentOk;
@@ -308,7 +323,7 @@ public class PitSystemCheckCmd extends Command {
         reasons.add("disconnected");
       }
       if (!motionOk) {
-        reasons.add("no-motion");
+        reasons.add(invertedMotion ? "inverted-direction" : "no-motion");
       }
       if (!currentOk) {
         reasons.add(String.format(Locale.US, "overcurrent=%.1fA", peakStatorAmps));
@@ -321,6 +336,7 @@ public class PitSystemCheckCmd extends Command {
     stepConnected = false;
     stepEverDisconnected = false;
     stepPeakSpeed = 0.0;
+    stepReverseSpeed = 0.0;
     stepPeakStatorAmps = 0.0;
     stepStartPosRot = 0.0;
     stepMaxDisplacementRot = 0.0;
