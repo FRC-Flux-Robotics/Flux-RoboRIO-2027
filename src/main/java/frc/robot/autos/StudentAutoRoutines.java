@@ -43,7 +43,7 @@ import java.util.Map;
  * </ol>
  */
 public final class StudentAutoRoutines {
-  public static final String DEFAULT_STUDENT_AUTO_NAME = "STUDENT: Default 2026 Autonomous";
+  public static final String DEFAULT_STUDENT_AUTO_NAME = "STUDENT: Left-Right-Left-Shoot Autonomous";
   public static final String FIXED_MOVES_AUTO_NAME = "EXAMPLE: 2026 Fixed Code Moves + Hub Shoot";
   public static final String FULL_CYCLE_PATHPLANNER_AUTO_NAME =
       "EXAMPLE: 2026 PathPlanner 2-Path (Hub to Depot + Collect)";
@@ -80,13 +80,33 @@ public final class StudentAutoRoutines {
     //   • Toggle intake:   Commands.runOnce(() -> superstructure.requestState(State.INTAKING))
     //   • Aim & shoot Hub: createAimAndShootHubCommand(drive, superstructure, shotCalculator, 2.0)
     //   • Orbit & shoot:   createShootOnTheMoveCircleCommand(drive, superstructure, shotCalculator, 0.80, 3.0)
-    return Commands.sequence(
-            Commands.runOnce(
-                () -> {
-                  drive.setPose(new Pose2d(3.10, 4.05, Rotation2d.kZero));
-                  superstructure.requestState(State.IDLE);
-                }))
-        .withName(DEFAULT_STUDENT_AUTO_NAME);
+    return Commands.sequence
+    (
+        Commands.runOnce
+        (
+            () -> 
+            {
+                drive.setPose(new Pose2d(3.10, 4.05, Rotation2d.kZero));
+                // superstructure.requestState(State.IDLE); // OG code
+                superstructure.prepShot
+                (
+                    Superstructure.DEFAULT_SHORT_SHOOTER_RPS,
+                    Superstructure.DEFAULT_SHORT_HOOD_ROT
+                );
+            }
+        ),
+        createAimAndShootHubCommand(drive, superstructure, shotCalculator, 2.0),
+        Commands.runOnce(() -> superstructure.requestState(State.INTAKING)),
+        driveRelative(drive, 0.0, 0.0, -90.0, 2.0),
+        driveRelative(drive, 2.0, 0.0, 0.0, 3.0),
+        driveRelative(drive, 0.0, 0.0, 180.0, 2.0),
+        driveRelative(drive, 4.0, 0.0, 0.0, 4.0),
+        driveRelative(drive, 0.0, 0.0, -90.0, 2.0),
+        driveRelative(drive, 0.0, -2.0, 0.0, 3.0),
+        createAimAndShootHubCommand(drive, superstructure, shotCalculator, 4.0),
+        Commands.runOnce(() -> superstructure.requestState(State.IDLE))
+    )
+    .withName(DEFAULT_STUDENT_AUTO_NAME);
   }
 
   /**
