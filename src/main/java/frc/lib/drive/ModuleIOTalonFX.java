@@ -37,6 +37,12 @@ import java.util.Queue;
  * registers 250 Hz odometry signals with {@link PhoenixOdometryThread}.
  */
 public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
+  /**
+   * Keep RemoteCANcoder matching proven 2026 New_Robot until steer motor vs. CANcoder polarity is
+   * verified in Tuner X (avoids unverified automatic FusedCANcoder polarity inversion on Pro buses).
+   */
+  public static final boolean ENABLE_FUSED_CANCODER = false;
+
   private final TalonFX driveTalon;
   private final TalonFX turnTalon;
   private final CANcoder cancoder;
@@ -134,7 +140,8 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
     String busLower = swerveConfig.canBus().toLowerCase(Locale.ROOT);
     boolean can20Bus = "rio".equals(busLower) || busLower.startsWith("can_s");
     boolean proCanFdReady =
-        !can20Bus
+        ENABLE_FUSED_CANCODER
+            && !can20Bus
             && bus.isNetworkFD()
             && Boolean.TRUE.equals(turnTalon.getIsProLicensed().refresh().getValue());
     TalonFXConfiguration turnCfg = new TalonFXConfiguration();

@@ -186,7 +186,7 @@
   <g transform="translate(24, 274)">
     <rect width="224" height="52" rx="7" fill="#254BA0" stroke="#2B7BFF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">Superstructure</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.robot · 419L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.robot · 433L</text>
   </g>
   <g transform="translate(24, 340)">
     <rect width="224" height="52" rx="7" fill="#254BA0" stroke="#2B7BFF" stroke-width="1.6"/>
@@ -226,7 +226,7 @@
   <g transform="translate(24, 802)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">PitSystemCheckCmd</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.commands · 410L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.commands · 433L</text>
   </g>
   <g transform="translate(24, 868)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
@@ -306,7 +306,7 @@
   <g transform="translate(536, 142)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">ModuleIOTalonFX</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 375L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 382L</text>
   </g>
   <g transform="translate(536, 208)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>

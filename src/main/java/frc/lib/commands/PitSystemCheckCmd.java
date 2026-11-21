@@ -58,6 +58,7 @@ public class PitSystemCheckCmd extends Command {
 
   private boolean stepConnected = false;
   private boolean stepEverDisconnected = false;
+  private boolean stepNotZeroed = false;
   private double stepPeakSpeed = 0.0;
   private double stepReverseSpeed = 0.0;
   private double stepPeakStatorAmps = 0.0;
@@ -250,7 +251,10 @@ public class PitSystemCheckCmd extends Command {
           (Math.abs(expectedDelta) > 1e-4)
               ? Math.signum(expectedDelta)
               : (Math.abs(target.activePosRot()) > 1e-4 ? Math.signum(target.activePosRot()) : 1.0);
-      if (activePhase) {
+      if (!pm.isZeroConfirmed()) {
+        stepNotZeroed = true;
+        pm.stop();
+      } else if (activePhase) {
         pm.setPosition(target.activePosRot());
         double signedDisp = (pm.getPosition() - stepStartPosRot) * dirSign;
         double signedVel = pm.getVelocity() * dirSign;
@@ -273,13 +277,19 @@ public class PitSystemCheckCmd extends Command {
       if (localLoop == loopsPerStep) {
         pm.stop();
         boolean moved =
-            stepMaxDisplacementRot >= MIN_POSITION_DELTA_ROT
-                || stepPeakVelRps >= MIN_POSITION_VELOCITY_RPS;
+            !stepNotZeroed
+                && (stepMaxDisplacementRot >= MIN_POSITION_DELTA_ROT
+                    || stepPeakVelRps >= MIN_POSITION_VELOCITY_RPS);
         // Require opposite-direction displacement past start so healthy closed-loop overshoot
         // damping back toward setpoint never falsely triggers inverted-direction.
-        boolean inverted = stepReverseDisplacementRot >= MIN_POSITION_DELTA_ROT;
+        boolean inverted = !stepNotZeroed && stepReverseDisplacementRot >= MIN_POSITION_DELTA_ROT;
         evaluateStep(
-            label, stepConnected && !stepEverDisconnected, moved, inverted, stepPeakStatorAmps);
+            label,
+            stepConnected && !stepEverDisconnected,
+            moved,
+            inverted,
+            stepNotZeroed,
+            stepPeakStatorAmps);
       }
     } else {
       VelocityCheckTarget target = velocityTargets.get(stepIdx - cornerCount - posCount);
@@ -322,9 +332,19 @@ public class PitSystemCheckCmd extends Command {
       boolean motionOk,
       boolean invertedMotion,
       double peakStatorAmps) {
+    evaluateStep(label, connectedOk, motionOk, invertedMotion, false, peakStatorAmps);
+  }
+
+  private void evaluateStep(
+      String label,
+      boolean connectedOk,
+      boolean motionOk,
+      boolean invertedMotion,
+      boolean notZeroed,
+      double peakStatorAmps) {
     completedSteps++;
     boolean currentOk = peakStatorAmps <= MAX_SAFE_STATOR_AMPS;
-    boolean stepPassed = connectedOk && motionOk && currentOk && !invertedMotion;
+    boolean stepPassed = connectedOk && motionOk && currentOk && !invertedMotion && !notZeroed;
 
     Logger.recordOutput("PitCheck/Actuator/" + label + "/Passed", stepPassed);
     Logger.recordOutput("PitCheck/Actuator/" + label + "/Connected", connectedOk);
@@ -335,7 +355,9 @@ public class PitSystemCheckCmd extends Command {
       if (!connectedOk) {
         reasons.add("disconnected");
       }
-      if (invertedMotion) {
+      if (notZeroed) {
+        reasons.add("not-zeroed(press-Op-Back)");
+      } else if (invertedMotion) {
         reasons.add("inverted-direction");
       } else if (!motionOk) {
         reasons.add("no-motion");
@@ -350,6 +372,7 @@ public class PitSystemCheckCmd extends Command {
   private void resetStepAccumulators() {
     stepConnected = false;
     stepEverDisconnected = false;
+    stepNotZeroed = false;
     stepPeakSpeed = 0.0;
     stepReverseSpeed = 0.0;
     stepPeakStatorAmps = 0.0;

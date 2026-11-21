@@ -2,6 +2,8 @@ package frc.robot;
 
 import edu.wpi.first.math.geometry.Pose3d;
 import edu.wpi.first.math.geometry.Rotation3d;
+import edu.wpi.first.wpilibj.DriverStation;
+import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.lib.mechanism.PositionMechanism;
 import frc.lib.mechanism.VelocityMechanism;
@@ -78,6 +80,9 @@ public class Superstructure extends SubsystemBase {
   private int virtualGamePieceCount = 1;
   private boolean shotDischargedInCurrentBurst = false;
   private boolean pendingTunableRefresh = false;
+  private static final double UNZEROED_WARNING_INTERVAL_SEC = 2.5;
+
+  private double lastUnzeroedWarningSec = Double.NEGATIVE_INFINITY;
   private boolean intakeUnjamming = false;
   private double intakeUnjamVolts = 0.0;
   private boolean indexerUnjamming = false;
@@ -351,6 +356,15 @@ public class Superstructure extends SubsystemBase {
         feederRps,
         tilterDeployRot,
         tilterStowRot);
+    if (state != State.IDLE && (!tilter.isZeroConfirmed() || !hood.isZeroConfirmed())) {
+      double nowSec = Timer.getFPGATimestamp();
+      if ((nowSec - lastUnzeroedWarningSec) >= UNZEROED_WARNING_INTERVAL_SEC) {
+        lastUnzeroedWarningSec = nowSec;
+        DriverStation.reportWarning(
+            "Superstructure: Tilter/Hood not zeroed since boot — stow and press Operator Back to confirm zero.",
+            false);
+      }
+    }
     if (state == State.SHOOTING || state == State.INTAKING) {
       applyStateSetpoints(true);
     } else if (pendingTunableRefresh) {

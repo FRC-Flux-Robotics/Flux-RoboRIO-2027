@@ -3357,6 +3357,39 @@ public class Tier2DeterministicSolversTest {
             .anyMatch(s -> s.contains("Intake") && s.contains("inverted-direction")),
         "Failed actuators must flag rebounding Intake inverted-direction: "
             + check.getFailedActuators());
+
+    // Unzeroed PositionMechanism must fail PitSystemCheckCmd with explicit not-zeroed reason.
+    PositionMechanism unzeroedTilter = new PositionMechanism(new MechanismIOSim(tilterSpec), tilterSpec);
+    PositionMechanism unzeroedHood = new PositionMechanism(new MechanismIOSim(hoodSpec), hoodSpec);
+    PitSystemCheckCmd unzeroedCheck =
+        new PitSystemCheckCmd(
+            container.getDrive(),
+            List.of(
+                new PositionCheckTarget(unzeroedTilter, -2.0, 0.0),
+                new PositionCheckTarget(unzeroedHood, 2.0, 0.0)),
+            List.of(),
+            6,
+            2,
+            () -> {});
+    unzeroedCheck.initialize();
+    while (!unzeroedCheck.isFinished()) {
+      unzeroedCheck.execute();
+      container.getDrive().periodic();
+      unzeroedTilter.periodic();
+      unzeroedHood.periodic();
+    }
+    unzeroedCheck.end(false);
+    assertFalse(
+        unzeroedCheck.hasPassed(),
+        "PitSystemCheckCmd must fail clearly when Tilter/Hood have not been zeroed since boot");
+    assertTrue(
+        unzeroedCheck.getFailedActuators().stream()
+            .anyMatch(s -> s.contains("Tilter") && s.contains("not-zeroed")),
+        "Expected explicit not-zeroed reason for Tilter: " + unzeroedCheck.getFailedActuators());
+    assertTrue(
+        unzeroedCheck.getFailedActuators().stream()
+            .anyMatch(s -> s.contains("Hood") && s.contains("not-zeroed")),
+        "Expected explicit not-zeroed reason for Hood: " + unzeroedCheck.getFailedActuators());
   }
 
   private static void deleteTree(Path root) {
