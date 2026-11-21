@@ -1,0 +1,7 @@
+# Starter Behavioral Preset: Slow Crawl (1.5 m/s) for first carpet drives on CHASSIS_3
+# Drop into Google Drive FLUX-10413-Hub/code/configs/presets/ and select via FluxTray -> Switch Config
+key,DEFAULT
+maxLinearSpeedMps,1.5
+maxAngularSpeedRadPerSec,2.5
+joystickSensitivity,0.65
+rotationSensitivity,0.80

@@ -96,6 +96,10 @@ public class Robot extends LoggedRobot {
     deployedGitSha = LogFileManager.readDeployedGitSha(deployDir);
     identity = RobotIdentity.detect();
     FluxFig bootConfig = FluxFig.load(configDir, identity.name());
+    FluxFig.ActiveProfileDirective bootDirective =
+        RobotContainer.readActiveProfileDirective(configDir);
+    String bootConfigChannel = RobotContainer.resolveBootConfigChannel(bootDirective, bootConfig);
+    String bootConfigPreset = RobotContainer.resolveBootConfigPreset(bootDirective, bootConfig);
 
     // Record all immutable boot metadata BEFORE Logger.start() so WPILOG headers capture it.
     Logger.recordMetadata("LogDirectory", logDir);
@@ -105,6 +109,8 @@ public class Robot extends LoggedRobot {
     Logger.recordMetadata("ConfigSHA256", bootConfig.getConfigSha256());
     Logger.recordMetadata("FluxFigProfile", bootConfig.getActiveProfile());
     Logger.recordMetadata("FluxFigVersion", bootConfig.getEffectiveVersion());
+    Logger.recordMetadata("ConfigChannel", bootConfigChannel);
+    Logger.recordMetadata("ConfigPreset", bootConfigPreset);
 
     if (!loggerStarted) {
       if (!Logger.hasReplaySource()) {
@@ -191,7 +197,9 @@ public class Robot extends LoggedRobot {
           robotContainer.getBatteryIo().getResolvedBatteryName(),
           robotContainer.getFluxFig().getInt("loopPeriodMs"),
           deployedGitSha,
-          bootTimestampIso);
+          bootTimestampIso,
+          robotContainer.getBootConfigChannel(),
+          robotContainer.getBootConfigPreset());
     } catch (IOException ignored) {
     }
   }
@@ -286,6 +294,9 @@ public class Robot extends LoggedRobot {
 
   @Override
   public void close() {
+    if (robotContainer != null) {
+      robotContainer.close();
+    }
     try {
       Files.deleteIfExists(robotStateFile);
     } catch (IOException ignored) {

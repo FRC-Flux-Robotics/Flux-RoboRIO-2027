@@ -86,7 +86,7 @@ public final class DriveCommands {
 
           Translation2d fieldLinearPct = linearPct.rotateBy(FieldPositions.operatorForward());
           double maxLinear = drive.getMaxLinearSpeedMps();
-          double maxAngular = drive.getConfig().maxAngularSpeedRadPerSec();
+          double maxAngular = drive.getMaxAngularSpeedRadPerSec();
 
           ChassisSpeeds desiredFieldSpeeds =
               new ChassisSpeeds(
@@ -136,13 +136,13 @@ public final class DriveCommands {
       DoubleSupplier headingFeedforwardRadPerSecSupplier,
       BooleanSupplier deadManHeldSupplier,
       Subsystem... extraRequirements) {
-    double maxAngular = drive.getConfig().maxAngularSpeedRadPerSec();
+    double initialMaxAngular = drive.getMaxAngularSpeedRadPerSec();
     ProfiledPIDController angleController =
         new ProfiledPIDController(
             ANGLE_KP,
             0.0,
             ANGLE_KD,
-            new TrapezoidProfile.Constraints(maxAngular, ANGLE_MAX_ACCEL_RAD_PER_SEC_SQ));
+            new TrapezoidProfile.Constraints(initialMaxAngular, ANGLE_MAX_ACCEL_RAD_PER_SEC_SQ));
     angleController.enableContinuousInput(-Math.PI, Math.PI);
 
     Subsystem[] allRequirements = new Subsystem[1 + extraRequirements.length];
@@ -156,6 +156,7 @@ public final class DriveCommands {
                       xSupplier.getAsDouble(), ySupplier.getAsDouble(), sensitivity);
               Translation2d fieldLinearPct = linearPct.rotateBy(FieldPositions.operatorForward());
               double maxLinear = drive.getMaxLinearSpeedMps();
+              double maxAngular = drive.getMaxAngularSpeedRadPerSec();
 
               Rotation2d currentHeading = drive.getPose().getRotation();
               Rotation2d targetHeading = targetHeadingSupplier.get();

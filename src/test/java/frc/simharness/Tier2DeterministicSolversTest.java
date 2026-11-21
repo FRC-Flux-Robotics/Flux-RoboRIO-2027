@@ -17,6 +17,8 @@ import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.geometry.Translation3d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.math.kinematics.SwerveModuleState;
+import edu.wpi.first.networktables.DoublePublisher;
+import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.simulation.DriverStationSim;
@@ -56,6 +58,7 @@ import frc.lib.util.FieldPositions.CoordinateSystem;
 import frc.lib.util.FieldPositions.FieldProfile;
 import frc.lib.util.LogFileManager;
 import frc.lib.util.LoggedTunableNumber;
+import frc.lib.util.Nt4FluxFigTuningBackend;
 import frc.lib.util.PhoenixUtil;
 import frc.lib.util.PiecewiseSensitivity;
 import frc.lib.util.SafeAutoBuilder;
@@ -3390,6 +3393,241 @@ public class Tier2DeterministicSolversTest {
         unzeroedCheck.getFailedActuators().stream()
             .anyMatch(s -> s.contains("Hood") && s.contains("not-zeroed")),
         "Expected explicit not-zeroed reason for Hood: " + unzeroedCheck.getFailedActuators());
+  }
+
+  @Test
+  public void testM129BareDrivetrainZeroCamerasAutoRateOdometryFourCornerPitCheckAndDefaultSplit()
+      throws Exception {
+    CommandScheduler.getInstance().cancelAll();
+    CommandScheduler.getInstance().getDefaultButtonLoop().clear();
+
+    RobotContainer chassis3 =
+        new RobotContainer(RobotIdentity.CHASSIS_3, Paths.get("src/main/deploy/configs"), true);
+    try {
+      assertTrue(chassis3.isGhostSuperstructureActive());
+      assertEquals(0, chassis3.getCameraCount(), "CHASSIS_3 has 0 rows in cameras.csv");
+      assertEquals(0, chassis3.getVision().getCameraCount(), "Vision must instantiate 0 cameras");
+
+      // Ghost PitSystemCheckCmd on bare chassis runs strictly the 4 swerve corners (~6.8 s)
+      // and passes without Port 1 Operator controller or mechanism encoder zeroing.
+      PitSystemCheckCmd pitCheck = chassis3.createPitSystemCheckCommand();
+      assertEquals(
+          4 * (PitSystemCheckCmd.DEFAULT_STEP_LOOPS + PitSystemCheckCmd.DEFAULT_SETTLE_LOOPS),
+          pitCheck.getTotalLoops(),
+          "Bare-chassis PitSystemCheckCmd must run exactly 4 swerve corner steps");
+      pitCheck.initialize();
+      while (!pitCheck.isFinished()) {
+        pitCheck.execute();
+        chassis3.getDrive().periodic();
+      }
+      pitCheck.end(false);
+      assertTrue(
+          pitCheck.hasPassed(),
+          "Bare-chassis 4-corner PitSystemCheckCmd must pass without Operator Back zeroing: "
+              + pitCheck.getSummary());
+
+      // Guarded Driver A (0 cameras) and Driver RT (Ghost chassis) must not fire blind moves or shooting.
+      DriverStationSim.setAutonomous(false);
+      DriverStationSim.setTest(false);
+      DriverStationSim.setEnabled(true);
+      DriverStationSim.setFmsAttached(false);
+      XboxControllerSim driverSim = new XboxControllerSim(0);
+      driverSim.setLeftY(0.0);
+      driverSim.setLeftX(0.0);
+      driverSim.setRightX(0.0);
+      driverSim.setAButton(true);
+      driverSim.setRightTriggerAxis(1.0);
+      driverSim.notifyNewData();
+      DriverStationSim.notifyNewData();
+
+      chassis3.getDrive().setPose(new Pose2d(0.0, 0.0, Rotation2d.kZero));
+      for (int i = 0; i < 10; i++) {
+        CommandScheduler.getInstance().run();
+        chassis3.periodicUpdate();
+      }
+      assertEquals(
+          0.0,
+          chassis3.getDrive().getPose().getTranslation().getNorm(),
+          1e-4,
+          "Driver A must remain inactive on 0-camera CHASSIS_3");
+      assertEquals(
+          State.IDLE,
+          chassis3.getSuperstructure().getState(),
+          "Driver RT must remain inactive on bare-drivetrain CHASSIS_3");
+
+      driverSim.setAButton(false);
+      driverSim.setRightTriggerAxis(0.0);
+      driverSim.notifyNewData();
+    } finally {
+      DriverStationSim.setEnabled(false);
+      DriverStationSim.notifyNewData();
+      CommandScheduler.getInstance().cancelAll();
+      CommandScheduler.getInstance().getDefaultButtonLoop().clear();
+      chassis3.close();
+    }
+
+    // Auto-rate selection: 100 Hz on CAN 2.0 ("rio" / "can_s*") vs 250 Hz on CANivore FD.
+    assertEquals(100.0, PhoenixOdometryThread.resolveFrequencyHz("rio", 0.0), 1e-6);
+    assertEquals(100.0, PhoenixOdometryThread.resolveFrequencyHz("can_s0", 0.0), 1e-6);
+    assertEquals(100.0, PhoenixOdometryThread.resolveFrequencyHz("can_s2", 0.0), 1e-6);
+    assertEquals(250.0, PhoenixOdometryThread.resolveFrequencyHz("Drivetrain", 0.0), 1e-6);
+    assertEquals(250.0, PhoenixOdometryThread.resolveFrequencyHz("CANdace", 0.0), 1e-6);
+    assertEquals(125.0, PhoenixOdometryThread.resolveFrequencyHz("rio", 125.0), 1e-6);
+
+    // Editing DEFAULT behavioral limits updates FUEL, CORAL, and CHASSIS_3 identically while
+    // keeping hardware columns robot-specific and rio CAN bus at 100 Hz.
+    Path tmpDir = Files.createTempDirectory("flux-m129-default-split-");
+    try {
+      try (var stream = Files.list(Paths.get("src/main/deploy/configs"))) {
+        for (Path src : stream.filter(Files::isRegularFile).toList()) {
+          Files.copy(src, tmpDir.resolve(src.getFileName()), StandardCopyOption.REPLACE_EXISTING);
+        }
+      }
+      Path paramsPath = tmpDir.resolve("parameters.csv");
+      String paramsCsv = Files.readString(paramsPath);
+      paramsCsv =
+          paramsCsv
+              .replace("maxLinearSpeedMps,4.5,", "maxLinearSpeedMps,3.25,")
+              .replace(
+                  "swerveCanBus,Drivetrain,can_s0,Drivetrain,can_s0,Drivetrain,,CANdace,Drivetrain",
+                  "swerveCanBus,Drivetrain,can_s0,Drivetrain,can_s0,Drivetrain,,CANdace,rio");
+      Files.writeString(paramsPath, paramsCsv);
+
+      FluxFig fig = new FluxFig(tmpDir);
+      assertEquals(0, fig.validateStrict().size(), "Modified parameters.csv must validate strictly");
+      for (String robot : List.of("FUEL", "CORAL", "CHASSIS_3")) {
+        fig.setActiveProfile(robot);
+        assertEquals(3.25, fig.getDouble("maxLinearSpeedMps"), 1e-6, "DEFAULT must govern " + robot);
+        assertEquals(4.71, fig.getDouble("maxAngularSpeedRadPerSec"), 1e-6);
+        assertEquals(60.0, fig.getDouble("driveStatorLimitAmps"), 1e-6);
+        assertEquals(40.0, fig.getDouble("driveSupplyLimitAmps"), 1e-6);
+        assertEquals(7.5, fig.getDouble("brownoutShedThresholdVolts"), 1e-6);
+      }
+      fig.setActiveProfile("FUEL:snappy");
+      assertEquals(4.8, fig.getDouble("maxLinearSpeedMps"), 1e-6, "Overlay must still override DEFAULT");
+
+      SwerveConfig fuelCfg = SwerveConfig.fromFluxFig(fig, "FUEL");
+      SwerveConfig chassis3RioCfg = SwerveConfig.fromFluxFig(fig, "CHASSIS_3");
+      assertEquals("Drivetrain", fuelCfg.canBus());
+      assertEquals(250.0, fuelCfg.odometryFrequencyHz(), 1e-6);
+      assertEquals("rio", chassis3RioCfg.canBus());
+      assertEquals(100.0, chassis3RioCfg.odometryFrequencyHz(), 1e-6);
+    } finally {
+      deleteTree(tmpDir);
+    }
+  }
+
+  @Test
+  public void testM130LiveNt4TuningUpdatesDrivetrainWritesTmpSnapshotAndRevertsOnFms()
+      throws Exception {
+    Path tmpDir = Files.createTempDirectory("flux-m130-nt4-tuning-");
+    NetworkTableInstance ntInst = NetworkTableInstance.create();
+    Nt4FluxFigTuningBackend ntBackend = new Nt4FluxFigTuningBackend(ntInst);
+    RobotContainer container = null;
+    try {
+      Path cfgDir = tmpDir.resolve("configs");
+      Files.createDirectories(cfgDir);
+      try (var stream = Files.list(Paths.get("src/main/deploy/configs"))) {
+        for (Path src : stream.filter(Files::isRegularFile).toList()) {
+          Files.copy(src, cfgDir.resolve(src.getFileName()), StandardCopyOption.REPLACE_EXISTING);
+        }
+      }
+      String originalParamsCsv = Files.readString(cfgDir.resolve("parameters.csv"));
+      String originalMechsCsv = Files.readString(cfgDir.resolve("mechanisms.csv"));
+      Files.writeString(
+          cfgDir.resolve(FluxFig.ACTIVE_PROFILE_FILE),
+          FluxFig.formatActiveProfileDirective(
+              "CHASSIS_3", FluxFig.Mode.TUNING, "v3", "EXPERIMENTAL", "live-tuning"));
+
+      Path tmpSnapshot = tmpDir.resolve("fluxfig-tuned-snapshot.txt");
+      DriverStationSim.setFmsAttached(false);
+      DriverStationSim.notifyNewData();
+
+      container =
+          new RobotContainer(RobotIdentity.CHASSIS_3, cfgDir, null, true, ntBackend, tmpSnapshot);
+      assertEquals("EXPERIMENTAL", container.getBootConfigChannel());
+      assertEquals("live-tuning", container.getBootConfigPreset());
+      assertEquals(RobotContainer.OperatingMode.TRAINING, container.getOperatingMode());
+      assertTrue(container.isLiveTuningBackendEnabled());
+      assertEquals(5, ntBackend.getPublishedTopicCount());
+      assertEquals(4.5, container.getDrive().getMaxLinearSpeedMps(), 1e-6);
+      assertEquals(4.71, container.getDrive().getMaxAngularSpeedRadPerSec(), 1e-6);
+      assertEquals(0.80, container.getJoystickSensitivity().getMaxScale(), 1e-6);
+      assertEquals(1.00, container.getRotationSensitivity().getMaxScale(), 1e-6);
+      assertEquals(0.90, container.getDrive().getRuntimeDriveKp(), 1e-6);
+
+      RobotContainer finalContainer = container;
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> finalContainer.getFluxFig().registerTunableParameters("swerveCanBus"));
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> finalContainer.getFluxFig().registerTunableParameters("driveStatorLimitAmps"));
+
+      try (DoublePublisher linPub =
+              ntInst.getDoubleTopic("/FluxFig/Tuning/parameters/maxLinearSpeedMps").publish();
+          DoublePublisher angPub =
+              ntInst.getDoubleTopic("/FluxFig/Tuning/parameters/maxAngularSpeedRadPerSec").publish();
+          DoublePublisher joyPub =
+              ntInst.getDoubleTopic("/FluxFig/Tuning/parameters/joystickSensitivity").publish();
+          DoublePublisher rotPub =
+              ntInst.getDoubleTopic("/FluxFig/Tuning/parameters/rotationSensitivity").publish();
+          DoublePublisher kpPub =
+              ntInst.getDoubleTopic("/FluxFig/Tuning/mechanisms/SwerveDriveFL/kP").publish()) {
+        linPub.set(2.2);
+        angPub.set(3.0);
+        joyPub.set(0.65);
+        rotPub.set(0.85);
+        kpPub.set(1.35);
+        ntInst.flushLocal();
+
+        container.periodicUpdate();
+      }
+
+      assertEquals(2.2, container.getDrive().getMaxLinearSpeedMps(), 1e-6);
+      assertEquals(3.0, container.getDrive().getMaxAngularSpeedRadPerSec(), 1e-6);
+      assertEquals(0.65, container.getJoystickSensitivity().getMaxScale(), 1e-6);
+      assertEquals(0.85, container.getRotationSensitivity().getMaxScale(), 1e-6);
+      assertEquals(1.35, container.getDrive().getRuntimeDriveKp(), 1e-6);
+      assertTrue(Files.exists(tmpSnapshot), "Live tuning must write /tmp tuned snapshot file");
+      String snap = Files.readString(tmpSnapshot);
+      assertTrue(snap.contains("CHASSIS_3.maxLinearSpeedMps: 4.5 -> 2.2"), snap);
+      assertTrue(snap.contains("mechanisms[CHASSIS_3:SwerveDriveFL].kP: 0.90 -> 1.35"), snap);
+      FluxFig parsedSnap = FluxFig.fromEffectiveSnapshot(snap);
+      assertEquals(2.2, parsedSnap.getDouble("maxLinearSpeedMps"), 1e-6);
+      assertEquals(1.35, parsedSnap.getMechanismSpec("CHASSIS_3", "SwerveDriveFL").kP(), 1e-6);
+      assertEquals(
+          originalParamsCsv,
+          Files.readString(cfgDir.resolve("parameters.csv")),
+          "Live tuning must never modify deploy/configs/parameters.csv");
+      assertEquals(
+          originalMechsCsv,
+          Files.readString(cfgDir.resolve("mechanisms.csv")),
+          "Live tuning must never modify deploy/configs/mechanisms.csv");
+
+      // FMS lockout immediately switches back to PRODUCTION and reverts all live overrides.
+      DriverStationSim.setFmsAttached(true);
+      DriverStationSim.notifyNewData();
+      container.periodicUpdate();
+
+      assertEquals(RobotContainer.OperatingMode.COMPETITION, container.getOperatingMode());
+      assertEquals(FluxFig.Mode.PRODUCTION, container.getFluxFig().getMode());
+      assertFalse(container.getFluxFig().isModified());
+      assertEquals(4.5, container.getDrive().getMaxLinearSpeedMps(), 1e-6);
+      assertEquals(4.71, container.getDrive().getMaxAngularSpeedRadPerSec(), 1e-6);
+      assertEquals(0.80, container.getJoystickSensitivity().getMaxScale(), 1e-6);
+      assertEquals(1.00, container.getRotationSensitivity().getMaxScale(), 1e-6);
+      assertEquals(0.90, container.getDrive().getRuntimeDriveKp(), 1e-6);
+    } finally {
+      DriverStationSim.setFmsAttached(false);
+      DriverStationSim.notifyNewData();
+      if (container != null) {
+        container.close();
+      }
+      ntBackend.close();
+      ntInst.close();
+      deleteTree(tmpDir);
+    }
   }
 
   private static void deleteTree(Path root) {

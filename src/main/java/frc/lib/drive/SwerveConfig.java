@@ -34,7 +34,59 @@ public record SwerveConfig(
     double driveKa,
     double turnKp,
     double turnKd,
-    CornerConfig[] corners) {
+    CornerConfig[] corners,
+    double odometryFrequencyHz) {
+
+  public SwerveConfig(
+      String canBus,
+      int pigeonId,
+      double trackWidthMeters,
+      double wheelBaseMeters,
+      double wheelRadiusMeters,
+      double driveGearRatio,
+      double turnGearRatio,
+      double maxLinearSpeedMps,
+      double maxAngularSpeedRadPerSec,
+      double driveStatorLimitAmps,
+      double driveSupplyLimitAmps,
+      double driveSlipCurrentAmps,
+      double turnStatorLimitAmps,
+      double turnSupplyLimitAmps,
+      double driveKp,
+      double driveKi,
+      double driveKd,
+      double driveKs,
+      double driveKv,
+      double driveKa,
+      double turnKp,
+      double turnKd,
+      CornerConfig[] corners) {
+    this(
+        canBus,
+        pigeonId,
+        trackWidthMeters,
+        wheelBaseMeters,
+        wheelRadiusMeters,
+        driveGearRatio,
+        turnGearRatio,
+        maxLinearSpeedMps,
+        maxAngularSpeedRadPerSec,
+        driveStatorLimitAmps,
+        driveSupplyLimitAmps,
+        driveSlipCurrentAmps,
+        turnStatorLimitAmps,
+        turnSupplyLimitAmps,
+        driveKp,
+        driveKi,
+        driveKd,
+        driveKs,
+        driveKv,
+        driveKa,
+        turnKp,
+        turnKd,
+        corners,
+        PhoenixOdometryThread.resolveFrequencyHz(canBus, 0.0));
+  }
 
   /**
    * Per-corner swerve module hardware IDs, encoder offset, drive/steer inversion flags, and
@@ -86,6 +138,9 @@ public record SwerveConfig(
       double wheelRadiusM = fig.getDouble("wheelRadiusMeters");
       double driveGearRatio = fig.getDouble("driveGearRatio");
       double turnGearRatio = fig.getDouble("turnGearRatio");
+      double configuredOdomHz =
+          fig.hasParameter("odometryFrequencyHz") ? fig.getDouble("odometryFrequencyHz") : 0.0;
+      double odomFreqHz = PhoenixOdometryThread.resolveFrequencyHz(canBus, configuredOdomHz);
 
       MechanismSpec flSpec = fig.getMechanismSpec(profileRobot, "SwerveDriveFL");
       if (statorLimit > 60.0 || slipLimit > 60.0 || flSpec.statorLimitAmps() > 60.0) {
@@ -120,7 +175,8 @@ public record SwerveConfig(
           flSpec.kA(),
           15.0,
           0.9,
-          corners);
+          corners,
+          odomFreqHz);
     } finally {
       fig.setActiveProfile(prevProfile);
     }

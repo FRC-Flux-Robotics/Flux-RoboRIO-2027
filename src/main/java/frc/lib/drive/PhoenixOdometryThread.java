@@ -9,6 +9,7 @@ import edu.wpi.first.wpilibj.RobotController;
 import frc.lib.util.PhoenixUtil;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Queue;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.locks.Lock;
@@ -16,12 +17,16 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.DoubleSupplier;
 
 /**
- * 250 Hz (4 ms) high-frequency swerve odometry thread supporting both roboRIO CANivore and
- * SystemCore native SocketCAN (`can_s0` latency-compensated {@code refreshAll} + {@code
- * getLatencyCompensatedValue}), plus deterministic {@link #sampleOnce(double)} stepping for tests.
+ * Configurable high-frequency swerve odometry thread (100 Hz on 1 Mbps CAN 2.0 buses such as
+ * {@code "rio"} / {@code can_s*}; 250 Hz on CTRE CANivore FD buses) using latency-compensated
+ * {@code refreshAll} + {@code getLatencyCompensatedValue}, plus deterministic {@link
+ * #sampleOnce(double)} stepping for tests.
  */
 public final class PhoenixOdometryThread {
   public static final double ODOMETRY_FREQUENCY_HZ = 250.0;
+  public static final double CAN_20_ODOMETRY_FREQUENCY_HZ = 100.0;
+  public static final double CAN_FD_ODOMETRY_FREQUENCY_HZ = 250.0;
+  public static final double MIN_ODOMETRY_FREQUENCY_HZ = 20.0;
   public static final Lock ODOMETRY_LOCK = new ReentrantLock();
 
   private static PhoenixOdometryThread instance = null;
@@ -32,6 +37,7 @@ public final class PhoenixOdometryThread {
   private final List<Queue<Double>> timestampQueues = new ArrayList<>();
   private final Queue<Double> timestampQueue = new ArrayBlockingQueue<>(32);
   private BaseStatusSignal[] cachedSignals = new BaseStatusSignal[0];
+  private volatile double odometryFrequencyHz = ODOMETRY_FREQUENCY_HZ;
   private final Thread thread;
 
   private PhoenixOdometryThread() {
@@ -40,7 +46,8 @@ public final class PhoenixOdometryThread {
             () -> {
               while (!Thread.currentThread().isInterrupted()) {
                 try {
-                  Thread.sleep((long) (1000.0 / ODOMETRY_FREQUENCY_HZ));
+                  long sleepMs = Math.max(2L, Math.round(1000.0 / odometryFrequencyHz));
+                  Thread.sleep(sleepMs);
                   if (hasRegisteredSignals()) {
                     sampleNow();
                   }
@@ -50,9 +57,43 @@ public final class PhoenixOdometryThread {
                 }
               }
             },
-            "PhoenixOdometryThread-250Hz");
+            "PhoenixOdometryThread");
     thread.setDaemon(true);
     thread.start();
+  }
+
+  /** Returns true when {@code canBus} is a 1 Mbps CAN 2.0 bus ({@code "rio"} or {@code can_s*}). */
+  public static boolean isCan20Bus(String canBus) {
+    if (canBus == null || canBus.isBlank()) {
+      return true;
+    }
+    String lower = canBus.trim().toLowerCase(Locale.ROOT);
+    return "rio".equals(lower) || lower.startsWith("can_s");
+  }
+
+  /**
+   * Resolves odometry polling frequency: honors an explicit positive {@code configuredHz} override
+   * (clamped to {@code [20, 250] Hz}), otherwise defaults to {@code 100 Hz} on 1 Mbps CAN 2.0
+   * ({@code "rio"} / {@code can_s*}) to avoid {@code TxTimeout} bus saturation and {@code 250 Hz}
+   * on CTRE CANivore FD buses.
+   */
+  public static double resolveFrequencyHz(String canBus, double configuredHz) {
+    if (Double.isFinite(configuredHz) && configuredHz > 0.0) {
+      return Math.max(MIN_ODOMETRY_FREQUENCY_HZ, Math.min(CAN_FD_ODOMETRY_FREQUENCY_HZ, configuredHz));
+    }
+    return isCan20Bus(canBus) ? CAN_20_ODOMETRY_FREQUENCY_HZ : CAN_FD_ODOMETRY_FREQUENCY_HZ;
+  }
+
+  public void setOdometryFrequencyHz(double frequencyHz) {
+    if (!Double.isFinite(frequencyHz) || frequencyHz <= 0.0) {
+      return;
+    }
+    this.odometryFrequencyHz =
+        Math.max(MIN_ODOMETRY_FREQUENCY_HZ, Math.min(CAN_FD_ODOMETRY_FREQUENCY_HZ, frequencyHz));
+  }
+
+  public double getOdometryFrequencyHz() {
+    return odometryFrequencyHz;
   }
 
   public static synchronized PhoenixOdometryThread getInstance() {
@@ -69,19 +110,20 @@ public final class PhoenixOdometryThread {
   public Queue<Double> registerLatencyCompensatedSignal(
       StatusSignal<Angle> position, StatusSignal<AngularVelocity> velocity) {
     Queue<Double> queue = new ArrayBlockingQueue<>(32);
+    double targetFreqHz = this.odometryFrequencyHz;
     ODOMETRY_LOCK.lock();
     try {
       PhoenixUtil.tryUntilOk(
           "Odometry-PosFreq",
           () ->
               position.setUpdateFrequency(
-                  ODOMETRY_FREQUENCY_HZ, PhoenixUtil.DEFAULT_CAN_CALL_TIMEOUT_SECONDS),
+                  targetFreqHz, PhoenixUtil.DEFAULT_CAN_CALL_TIMEOUT_SECONDS),
           5);
       PhoenixUtil.tryUntilOk(
           "Odometry-VelFreq",
           () ->
               velocity.setUpdateFrequency(
-                  ODOMETRY_FREQUENCY_HZ, PhoenixUtil.DEFAULT_CAN_CALL_TIMEOUT_SECONDS),
+                  targetFreqHz, PhoenixUtil.DEFAULT_CAN_CALL_TIMEOUT_SECONDS),
           5);
       allSignals.add(position);
       allSignals.add(velocity);
@@ -215,6 +257,7 @@ public final class PhoenixOdometryThread {
       timestampQueues.clear();
       timestampQueue.clear();
       cachedSignals = new BaseStatusSignal[0];
+      odometryFrequencyHz = ODOMETRY_FREQUENCY_HZ;
     } finally {
       ODOMETRY_LOCK.unlock();
     }

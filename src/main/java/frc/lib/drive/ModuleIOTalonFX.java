@@ -5,6 +5,7 @@ import com.ctre.phoenix6.CANBus;
 import com.ctre.phoenix6.StatusCode;
 import com.ctre.phoenix6.StatusSignal;
 import com.ctre.phoenix6.configs.CANcoderConfiguration;
+import com.ctre.phoenix6.configs.Slot0Configs;
 import com.ctre.phoenix6.configs.TalonFXConfiguration;
 import com.ctre.phoenix6.controls.MotionMagicExpoVoltage;
 import com.ctre.phoenix6.controls.NeutralOut;
@@ -54,6 +55,8 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
   private final VoltageOut driveVoltsReq = new VoltageOut(0);
   private final VoltageOut turnVoltsReq = new VoltageOut(0);
   private final NeutralOut neutralReq = new NeutralOut();
+  private final Slot0Configs driveSlot0Configs = new Slot0Configs();
+  private double lastAppliedDriveKp;
 
   private final StatusSignal<Angle> drivePosition;
   private final StatusSignal<AngularVelocity> driveVelocity;
@@ -126,6 +129,13 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
     driveCfg.Slot0.kS = swerveConfig.driveKs();
     driveCfg.Slot0.kV = swerveConfig.driveKv();
     driveCfg.Slot0.kA = swerveConfig.driveKa();
+    driveSlot0Configs.kP = driveCfg.Slot0.kP;
+    driveSlot0Configs.kI = driveCfg.Slot0.kI;
+    driveSlot0Configs.kD = driveCfg.Slot0.kD;
+    driveSlot0Configs.kS = driveCfg.Slot0.kS;
+    driveSlot0Configs.kV = driveCfg.Slot0.kV;
+    driveSlot0Configs.kA = driveCfg.Slot0.kA;
+    lastAppliedDriveKp = driveCfg.Slot0.kP;
     PhoenixUtil.tryUntilOk(
         "Module-" + corner.name() + "-Drive",
         () ->
@@ -233,6 +243,8 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
             turnSupplyCurrent);
 
     PhoenixOdometryThread odomThread = PhoenixOdometryThread.getInstance();
+    double odomFreqHz = swerveConfig.odometryFrequencyHz();
+    odomThread.setOdometryFrequencyHz(odomFreqHz);
     timestampQueue = odomThread.makeTimestampQueue();
     drivePositionQueue =
         odomThread.registerLatencyCompensatedSignal(drivePosition, driveVelocity);
@@ -243,7 +255,7 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
         "Module-" + corner.name() + "-CANcoderFeedbackFreq",
         () ->
             BaseStatusSignal.setUpdateFrequencyForAll(
-                PhoenixOdometryThread.ODOMETRY_FREQUENCY_HZ,
+                odomFreqHz,
                 cancoder.getPosition(),
                 cancoder.getVelocity()),
         3);
@@ -309,6 +321,17 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
   @Override
   public void setTurnOpenLoop(double volts) {
     turnTalon.setControl(turnVoltsReq.withOutput(volts));
+  }
+
+  @Override
+  public void setDriveKp(double kP) {
+    if (!Double.isFinite(kP) || kP < 0.0 || Double.compare(kP, lastAppliedDriveKp) == 0) {
+      return;
+    }
+    driveSlot0Configs.kP = kP;
+    lastAppliedDriveKp = kP;
+    // Non-blocking 0.0 s timeout, invoked only on explicit live-tuning edits (never every tick).
+    driveTalon.getConfigurator().apply(driveSlot0Configs, 0.0);
   }
 
   @Override

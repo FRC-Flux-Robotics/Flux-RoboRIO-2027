@@ -98,6 +98,8 @@ public interface ModuleIO {
 
   default void setTurnOpenLoop(double volts) {}
 
+  default void setDriveKp(double kP) {}
+
   default void stop() {}
 
   default void warmup() {}

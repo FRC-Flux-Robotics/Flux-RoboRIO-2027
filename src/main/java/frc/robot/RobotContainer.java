@@ -33,8 +33,10 @@ import frc.lib.drive.GyroIOPigeon2;
 import frc.lib.drive.ModuleIO;
 import frc.lib.drive.ModuleIOSim;
 import frc.lib.drive.ModuleIOTalonFX;
+import frc.lib.drive.PhoenixOdometryThread;
 import frc.lib.drive.SwerveConfig;
 import frc.lib.fluxfig.FluxFig;
+import frc.lib.fluxfig.FluxFig.ActiveProfileDirective;
 import frc.lib.fluxfig.FluxFig.CameraSpec;
 import frc.lib.fluxfig.FluxFig.MechanismSpec;
 import frc.lib.mechanism.MechanismIO;
@@ -46,6 +48,7 @@ import frc.lib.safety.BatteryIO;
 import frc.lib.safety.FaultSupervisor;
 import frc.lib.util.FieldPositions;
 import frc.lib.util.LoggedTunableNumber;
+import frc.lib.util.Nt4FluxFigTuningBackend;
 import frc.lib.util.PhoenixUtil;
 import frc.lib.util.PiecewiseSensitivity;
 import frc.lib.util.VirtualBatterySim;
@@ -60,6 +63,7 @@ import frc.robot.commands.ShotCalibrationCmd;
 import frc.robot.util.ShotCalculator;
 import frc.robot.util.ShotCalculator.ShotSolution;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
@@ -121,6 +125,8 @@ public class RobotContainer {
   private final String bootConfigSha256;
   private final String bootEffectiveVersion;
   private final String bootEffectiveSnapshot;
+  private final String bootConfigChannel;
+  private final String bootConfigPreset;
   private final long bootDiskFingerprint;
   private final FaultSupervisor faultSupervisor;
   private final BatteryIO batteryIo;
@@ -131,6 +137,7 @@ public class RobotContainer {
 
   private final Drive drive;
   private final Vision vision;
+  private final int cameraCount;
   private final PreMatchCalibrator preMatchCalibrator;
 
   private final VelocityMechanism intake;
@@ -143,6 +150,10 @@ public class RobotContainer {
   private final boolean ghostSuperstructureActive;
   private final boolean forceSimIo;
   private final LoggedDashboardChooser<Command> autoChooser;
+  private final FluxFig.TuningBackend externalTuningBackend;
+  private Nt4FluxFigTuningBackend ownedNt4TuningBackend;
+  private boolean tuningBackendEnabled = false;
+  private boolean wasTrainingMode = false;
 
   private final CommandXboxController driverController = new CommandXboxController(0);
   private final CommandXboxController operatorController = new CommandXboxController(1);
@@ -156,22 +167,46 @@ public class RobotContainer {
         identity,
         Filesystem.getDeployDirectory().toPath().resolve("configs"),
         null,
-        !RobotBase.isReal());
+        !RobotBase.isReal(),
+        null,
+        null);
   }
 
   /** Deterministic constructor allowing explicit config directory and simulated IO selection. */
   public RobotContainer(RobotIdentity identity, Path configDir, boolean forceSimIo) {
-    this(identity, configDir, null, forceSimIo);
+    this(identity, configDir, null, forceSimIo, null, null);
   }
 
   /** Constructor accepting a pre-loaded boot {@link FluxFig} snapshot to avoid duplicate disk loads. */
   public RobotContainer(
       RobotIdentity identity, Path configDir, FluxFig preloadedFluxFig, boolean forceSimIo) {
+    this(identity, configDir, preloadedFluxFig, forceSimIo, null, null);
+  }
+
+  /**
+   * Full deterministic constructor supporting custom {@link FluxFig.TuningBackend} and temporary
+   * tuned-snapshot path injection for live tuning integration tests.
+   */
+  public RobotContainer(
+      RobotIdentity identity,
+      Path configDir,
+      FluxFig preloadedFluxFig,
+      boolean forceSimIo,
+      FluxFig.TuningBackend tuningBackend,
+      Path tmpTunedSnapshotPath) {
     this.identity = identity;
     this.configDir = configDir;
     this.forceSimIo = forceSimIo;
+    this.externalTuningBackend = tuningBackend;
     this.fluxFig =
         (preloadedFluxFig != null) ? preloadedFluxFig : FluxFig.load(configDir, identity.name());
+    this.fluxFig.setTmpTunedSnapshotPath(
+        tmpTunedSnapshotPath != null
+            ? tmpTunedSnapshotPath
+            : FluxFig.DEFAULT_TMP_TUNED_SNAPSHOT_PATH);
+    ActiveProfileDirective bootDirective = readActiveProfileDirective(configDir);
+    this.bootConfigChannel = resolveBootConfigChannel(bootDirective, this.fluxFig);
+    this.bootConfigPreset = resolveBootConfigPreset(bootDirective, this.fluxFig);
     this.bootConfigSha256 = this.fluxFig.getConfigSha256();
     this.bootEffectiveVersion = this.fluxFig.getEffectiveVersion();
     this.bootEffectiveSnapshot = this.fluxFig.getEffectiveSnapshot();
@@ -184,13 +219,6 @@ public class RobotContainer {
             : FieldPositions.CoordinateSystem.WALL_BLUE_2026);
     applyFieldAndArenaConfig();
 
-    String cameraProfile =
-        (identity == RobotIdentity.CORAL || identity == RobotIdentity.CHASSIS_3)
-            ? RobotIdentity.CORAL.name()
-            : (identity == RobotIdentity.FUEL
-                ? RobotIdentity.FUEL.name()
-                : RobotIdentity.COMP_2027.name());
-
     boolean simMissingMechs = fluxFig.getBoolean("simulateMissingMechanisms");
     this.ghostSuperstructureActive =
         simMissingMechs
@@ -198,17 +226,29 @@ public class RobotContainer {
             || identity == RobotIdentity.CHASSIS_3;
 
     CameraSpec[] camConfigs =
-        fluxFig.getCamerasForRobot(cameraProfile).toArray(new CameraSpec[0]);
+        fluxFig.getCamerasForRobot(identity.name()).toArray(new CameraSpec[0]);
+    this.cameraCount = camConfigs.length;
     this.faultSupervisor = new FaultSupervisor(Math.max(1, camConfigs.length));
     this.batteryIo = new BatteryIO(fluxFig, fluxFig.getString("auxCanBus"));
     this.virtualBatterySim = new VirtualBatterySim(12.6, 0.015);
     this.shotCalculator = ShotCalculator.fromFluxFig(fluxFig);
+    double initialJoystickScale =
+        fluxFig.hasParameter("joystickSensitivity")
+            ? MathUtil.clamp(fluxFig.getDouble("joystickSensitivity"), 0.05, 1.0)
+            : 0.80;
+    double initialRotationScale =
+        fluxFig.hasParameter("rotationSensitivity")
+            ? MathUtil.clamp(fluxFig.getDouble("rotationSensitivity"), 0.05, 1.0)
+            : 1.00;
     this.joystickSensitivity =
-        new PiecewiseSensitivity("Drive/JoystickCurve", 0.09, 0.60, 0.10, 0.30, 0.80);
+        new PiecewiseSensitivity(
+            "Drive/JoystickCurve", 0.09, 0.60, 0.10, 0.30, initialJoystickScale);
     this.rotationSensitivity =
-        new PiecewiseSensitivity("Drive/RotationCurve", 0.09, 0.60, 0.10, 0.50, 1.00);
+        new PiecewiseSensitivity(
+            "Drive/RotationCurve", 0.09, 0.60, 0.10, 0.50, initialRotationScale);
 
     SwerveConfig swerveConfig = SwerveConfig.fromFluxFig(fluxFig, identity.name());
+    PhoenixOdometryThread.getInstance().setOdometryFrequencyHz(swerveConfig.odometryFrequencyHz());
     GyroIO gyroIo;
     ModuleIO[] moduleIos = new ModuleIO[4];
     if (forceSimIo) {
@@ -227,21 +267,23 @@ public class RobotContainer {
     this.drive.setLoopPeriodSeconds(fluxFig.getInt("loopPeriodMs") / 1000.0);
 
     VisionIO[] visionIos = new VisionIO[camConfigs.length];
-    String visionBackend = fluxFig.getString("visionBackend");
-    if (forceSimIo) {
-      for (int i = 0; i < camConfigs.length; i++) {
-        visionIos[i] = new VisionIOSim(camConfigs[i], drive::getPose);
-      }
-    } else if ("LIMELIGHT_SYSTEMCORE_USB".equalsIgnoreCase(visionBackend)) {
-      for (int i = 0; i < camConfigs.length; i++) {
-        visionIos[i] = new VisionIOLimelightSystemCore(camConfigs[i]);
-      }
-    } else {
-      AprilTagFieldLayout fieldLayout =
-          FieldPositions.configureLayoutOrigin(
-              AprilTagFieldLayout.loadField(AprilTagFields.k2026RebuiltWelded));
-      for (int i = 0; i < camConfigs.length; i++) {
-        visionIos[i] = new VisionIOPhotonVision(camConfigs[i], fieldLayout);
+    if (camConfigs.length > 0) {
+      String visionBackend = fluxFig.getString("visionBackend");
+      if (forceSimIo) {
+        for (int i = 0; i < camConfigs.length; i++) {
+          visionIos[i] = new VisionIOSim(camConfigs[i], drive::getPose);
+        }
+      } else if ("LIMELIGHT_SYSTEMCORE_USB".equalsIgnoreCase(visionBackend)) {
+        for (int i = 0; i < camConfigs.length; i++) {
+          visionIos[i] = new VisionIOLimelightSystemCore(camConfigs[i]);
+        }
+      } else {
+        AprilTagFieldLayout fieldLayout =
+            FieldPositions.configureLayoutOrigin(
+                AprilTagFieldLayout.loadField(AprilTagFields.k2026RebuiltWelded));
+        for (int i = 0; i < camConfigs.length; i++) {
+          visionIos[i] = new VisionIOPhotonVision(camConfigs[i], fieldLayout);
+        }
       }
     }
     this.vision = new Vision(drive::addVisionMeasurement, faultSupervisor, camConfigs, visionIos);
@@ -309,6 +351,12 @@ public class RobotContainer {
             this.hood,
             this.faultSupervisor);
 
+    registerLiveDrivetrainTunables();
+    if (this.fluxFig.getMode() == FluxFig.Mode.TUNING && !DriverStation.isFMSAttached()) {
+      enableLiveTuningBackend();
+      this.wasTrainingMode = true;
+    }
+
     registerNamedCommands();
     this.autoChooser = new LoggedDashboardChooser<>("Auto/Chooser");
     configureAutoChooser();
@@ -317,7 +365,12 @@ public class RobotContainer {
     Logger.recordOutput("FluxFig/BootConfigSHA256", bootConfigSha256);
     Logger.recordOutput("FluxFig/EffectiveVersion", bootEffectiveVersion);
     Logger.recordOutput("FluxFig/EffectiveSnapshot", bootEffectiveSnapshot);
+    Logger.recordOutput("FluxFig/ConfigChannel", bootConfigChannel);
+    Logger.recordOutput("FluxFig/ConfigPreset", bootConfigPreset);
+    Logger.recordOutput("FluxFig/Modified", false);
     Logger.recordOutput("FluxFig/RestartRequired", false);
+    Logger.recordOutput("Drive/OdometryFrequencyHz", swerveConfig.odometryFrequencyHz());
+    Logger.recordOutput("Vision/CameraCount", cameraCount);
   }
 
   private void registerNamedCommands() {
@@ -501,37 +554,41 @@ public class RobotContainer {
             () -> -driverController.getRightX(),
             () -> driverController.getLeftTriggerAxis() > 0.5));
 
-    driverController
-        .rightTrigger()
-        .whileTrue(
-            DriveCommands.joystickDriveAtAngle(
-                drive,
-                joystickSensitivity,
-                () -> -driverController.getLeftY(),
-                () -> -driverController.getLeftX(),
-                () -> {
-                  latestTeleopShotSolution = updateShootOnTheMove(true);
-                  return latestTeleopShotSolution.driveAimHeading();
-                },
-                () -> latestTeleopShotSolution.headingFeedforwardRadPerSec(),
-                () -> driverController.getLeftTriggerAxis() > 0.5,
-                superstructure))
-        .onFalse(
-            Commands.runOnce(() -> superstructure.requestState(State.IDLE), superstructure)
-                .ignoringDisable(true));
+    if (!ghostSuperstructureActive) {
+      driverController
+          .rightTrigger()
+          .whileTrue(
+              DriveCommands.joystickDriveAtAngle(
+                  drive,
+                  joystickSensitivity,
+                  () -> -driverController.getLeftY(),
+                  () -> -driverController.getLeftX(),
+                  () -> {
+                    latestTeleopShotSolution = updateShootOnTheMove(true);
+                    return latestTeleopShotSolution.driveAimHeading();
+                  },
+                  () -> latestTeleopShotSolution.headingFeedforwardRadPerSec(),
+                  () -> driverController.getLeftTriggerAxis() > 0.5,
+                  superstructure))
+          .onFalse(
+              Commands.runOnce(() -> superstructure.requestState(State.IDLE), superstructure)
+                  .ignoringDisable(true));
+    }
 
-    driverController
-        .a()
-        .whileTrue(
-            Commands.defer(
-                () -> {
-                  Pose2d targetPose = getHubAlignTargetPose(FieldPositions.isRedAlliance());
-                  return new DriveToPose(
-                      drive,
-                      () -> targetPose,
-                      () -> driverController.getLeftTriggerAxis() > 0.5);
-                },
-                Set.of(drive)));
+    if (cameraCount > 0) {
+      driverController
+          .a()
+          .whileTrue(
+              Commands.defer(
+                  () -> {
+                    Pose2d targetPose = getHubAlignTargetPose(FieldPositions.isRedAlliance());
+                    return new DriveToPose(
+                        drive,
+                        () -> targetPose,
+                        () -> driverController.getLeftTriggerAxis() > 0.5);
+                  },
+                  Set.of(drive)));
+    }
     driverController.b().whileTrue(Commands.run(drive::stopWithX, drive));
     driverController.y().onTrue(Commands.runOnce(this::resetFieldHeading).ignoringDisable(true));
     driverController.start().onTrue(createPitSystemCheckCommand().onlyIf(pitTestAllowed));
@@ -570,6 +627,10 @@ public class RobotContainer {
   }
 
   public PitSystemCheckCmd createPitSystemCheckCommand() {
+    if (ghostSuperstructureActive) {
+      return new PitSystemCheckCmd(
+          drive, List.of(), List.of(), this::resetSuperstructureToIdle);
+    }
     return new PitSystemCheckCmd(
         drive,
         List.of(
@@ -704,9 +765,21 @@ public class RobotContainer {
     boolean training = mode == OperatingMode.TRAINING;
     LoggedTunableNumber.setTuningMode(training);
     if (training) {
-      fluxFig.pollTuning();
+      if (!tuningBackendEnabled) {
+        enableLiveTuningBackend();
+      }
+      if (fluxFig.pollTuning() > 0) {
+        applyLiveTunedDrivetrainParameters();
+      }
+    } else if (wasTrainingMode) {
+      applyLiveTunedDrivetrainParameters();
     }
+    wasTrainingMode = training;
     Logger.recordOutput("Robot/OperatingMode", mode.name());
+    Logger.recordOutput("FluxFig/ConfigChannel", bootConfigChannel);
+    Logger.recordOutput("FluxFig/ConfigPreset", bootConfigPreset);
+    Logger.recordOutput("FluxFig/Modified", fluxFig.isModified());
+    Logger.recordOutput("FluxFig/EffectiveVersion", fluxFig.getEffectiveVersion());
 
     joystickSensitivity.pollTunables();
     rotationSensitivity.pollTunables();
@@ -864,5 +937,135 @@ public class RobotContainer {
 
   public boolean isGhostSuperstructureActive() {
     return ghostSuperstructureActive;
+  }
+
+  public int getCameraCount() {
+    return cameraCount;
+  }
+
+  public PiecewiseSensitivity getRotationSensitivity() {
+    return rotationSensitivity;
+  }
+
+  public String getBootConfigChannel() {
+    return bootConfigChannel;
+  }
+
+  public String getBootConfigPreset() {
+    return bootConfigPreset;
+  }
+
+  public boolean isLiveTuningBackendEnabled() {
+    return tuningBackendEnabled;
+  }
+
+  /** Closes owned NT4 tuning publishers when the robot JVM or simulation harness shuts down. */
+  public void close() {
+    if (ownedNt4TuningBackend != null) {
+      ownedNt4TuningBackend.close();
+      ownedNt4TuningBackend = null;
+    }
+  }
+
+  private void registerLiveDrivetrainTunables() {
+    fluxFig.registerTunableParameters(
+        "maxLinearSpeedMps",
+        "maxAngularSpeedRadPerSec",
+        "joystickSensitivity",
+        "rotationSensitivity");
+    fluxFig.registerTunableTableCell("mechanisms", "SwerveDriveFL", "kP");
+  }
+
+  private void enableLiveTuningBackend() {
+    if (DriverStation.isFMSAttached()) {
+      return;
+    }
+    FluxFig.TuningBackend backend = externalTuningBackend;
+    if (backend == null) {
+      if (ownedNt4TuningBackend == null) {
+        ownedNt4TuningBackend = new Nt4FluxFigTuningBackend();
+      }
+      backend = ownedNt4TuningBackend;
+    }
+    fluxFig.enableTuning(backend);
+    tuningBackendEnabled = true;
+  }
+
+  private void applyLiveTunedDrivetrainParameters() {
+    double linearMps =
+        MathUtil.clamp(safeReadDouble("maxLinearSpeedMps", drive.getMaxLinearSpeedMps()), 0.25, 6.0);
+    double angularRadPerSec =
+        MathUtil.clamp(
+            safeReadDouble("maxAngularSpeedRadPerSec", drive.getMaxAngularSpeedRadPerSec()),
+            0.5,
+            12.0);
+    drive.setRuntimeSpeedLimits(linearMps, angularRadPerSec);
+    if (fluxFig.hasParameter("joystickSensitivity")) {
+      joystickSensitivity.setMaxScale(
+          MathUtil.clamp(
+              safeReadDouble("joystickSensitivity", joystickSensitivity.getMaxScale()), 0.05, 1.0));
+    }
+    if (fluxFig.hasParameter("rotationSensitivity")) {
+      rotationSensitivity.setMaxScale(
+          MathUtil.clamp(
+              safeReadDouble("rotationSensitivity", rotationSensitivity.getMaxScale()), 0.05, 1.0));
+    }
+    double driveKp = resolveLiveDriveKp();
+    if (Double.isFinite(driveKp) && driveKp >= 0.0) {
+      drive.setDriveKp(MathUtil.clamp(driveKp, 0.0, 20.0));
+    }
+    Logger.recordOutput("Drive/RuntimeMaxLinearSpeedMps", drive.getMaxLinearSpeedMps());
+    Logger.recordOutput("Drive/RuntimeMaxAngularSpeedRadPerSec", drive.getMaxAngularSpeedRadPerSec());
+    Logger.recordOutput("Drive/RuntimeDriveKp", drive.getRuntimeDriveKp());
+  }
+
+  private double safeReadDouble(String key, double fallback) {
+    try {
+      double value = fluxFig.getDouble(key);
+      return Double.isFinite(value) ? value : fallback;
+    } catch (Exception ignored) {
+      return fallback;
+    }
+  }
+
+  private double resolveLiveDriveKp() {
+    try {
+      return fluxFig.getMechanismSpec(fluxFig.getActiveProfile(), "SwerveDriveFL").kP();
+    } catch (Exception ignored) {
+      try {
+        return fluxFig.getMechanismSpec(identity.name(), "SwerveDriveFL").kP();
+      } catch (Exception fallbackIgnored) {
+        return drive.getRuntimeDriveKp();
+      }
+    }
+  }
+
+  public static ActiveProfileDirective readActiveProfileDirective(Path configDir) {
+    if (configDir == null) {
+      return null;
+    }
+    Path file = configDir.resolve(FluxFig.ACTIVE_PROFILE_FILE);
+    if (!Files.isRegularFile(file)) {
+      return null;
+    }
+    try {
+      return FluxFig.parseActiveProfileDirective(Files.readString(file, StandardCharsets.UTF_8));
+    } catch (IOException ignored) {
+      return null;
+    }
+  }
+
+  public static String resolveBootConfigChannel(ActiveProfileDirective directive, FluxFig config) {
+    if (directive != null && directive.channel() != null && !directive.channel().isBlank()) {
+      return directive.channel().trim();
+    }
+    return (config != null && config.getMode() == FluxFig.Mode.TUNING) ? "EXPERIMENTAL" : "STABLE";
+  }
+
+  public static String resolveBootConfigPreset(ActiveProfileDirective directive, FluxFig config) {
+    if (directive != null && directive.preset() != null && !directive.preset().isBlank()) {
+      return directive.preset().trim();
+    }
+    return (config != null && config.getMode() == FluxFig.Mode.TUNING) ? "live-tuning" : "STABLE";
   }
 }

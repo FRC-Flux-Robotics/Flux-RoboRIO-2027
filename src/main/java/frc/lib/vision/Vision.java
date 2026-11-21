@@ -415,4 +415,8 @@ public class Vision extends SubsystemBase {
   public VisionIO getCameraIo(int index) {
     return ios[index];
   }
+
+  public int getCameraCount() {
+    return ios.length;
+  }
 }

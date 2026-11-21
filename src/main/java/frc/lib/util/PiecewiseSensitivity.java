@@ -57,6 +57,21 @@ public class PiecewiseSensitivity {
     this.slope2 = (this.xMiddle < 1.0) ? (this.yMax - this.yMiddle) / (1.0 - this.xMiddle) : 0.0;
   }
 
+  public double getMaxScale() {
+    return yMax;
+  }
+
+  /** Updates the upper output scale in memory while preserving curve monotonicity. */
+  public void setMaxScale(double maxScale) {
+    if (!Double.isFinite(maxScale)) {
+      return;
+    }
+    double clampedMax = MathUtil.clamp(maxScale, 0.05, 1.0);
+    double clampedMid = Math.min(this.yMiddle, clampedMax);
+    double clampedStart = Math.min(this.yStart, clampedMid);
+    set(this.xStart, this.xMiddle, clampedStart, clampedMid, clampedMax);
+  }
+
   public void pollTunables() {
     if (tunableXStart == null) {
       return;

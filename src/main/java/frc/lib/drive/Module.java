@@ -61,6 +61,10 @@ public class Module {
     io.stop();
   }
 
+  public void setDriveKp(double kP) {
+    io.setDriveKp(kP);
+  }
+
   public Rotation2d getAngle() {
     return inputs.turnPosition;
   }

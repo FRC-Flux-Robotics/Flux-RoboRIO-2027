@@ -58,6 +58,9 @@ public class Drive extends SubsystemBase {
   private double loopPeriodSec = 0.020;
   private double maxAccelScale = 1.0;
   private double brownoutDemandScale = 1.0;
+  private double runtimeMaxLinearSpeedMps;
+  private double runtimeMaxAngularSpeedRadPerSec;
+  private double runtimeDriveKp;
   private int totalOdometrySamplesIntegrated = 0;
   private double lastVisionTimestampSec = -1.0;
   private ChassisSpeeds lastCommandedSpeeds = new ChassisSpeeds();
@@ -68,6 +71,9 @@ public class Drive extends SubsystemBase {
     }
     this.config = config;
     this.gyroIo = gyroIo;
+    this.runtimeMaxLinearSpeedMps = config.maxLinearSpeedMps();
+    this.runtimeMaxAngularSpeedRadPerSec = config.maxAngularSpeedRadPerSec();
+    this.runtimeDriveKp = config.driveKp();
 
     Translation2d[] moduleTranslations = new Translation2d[4];
     for (int i = 0; i < 4; i++) {
@@ -197,7 +203,7 @@ public class Drive extends SubsystemBase {
   }
 
   public void runVelocity(ChassisSpeeds speeds) {
-    double maxAngular = config.maxAngularSpeedRadPerSec();
+    double maxAngular = runtimeMaxAngularSpeedRadPerSec;
     double clampedOmega = MathUtil.clamp(speeds.omegaRadiansPerSecond, -maxAngular, maxAngular);
     double effectiveScale = maxAccelScale * brownoutDemandScale;
     ChassisSpeeds scaled =
@@ -208,7 +214,7 @@ public class Drive extends SubsystemBase {
     lastCommandedSpeeds = scaled;
     ChassisSpeeds discreteSpeeds = ChassisSpeeds.discretize(scaled, loopPeriodSec);
     SwerveModuleState[] setpointStates = kinematics.toSwerveModuleStates(discreteSpeeds);
-    SwerveDriveKinematics.desaturateWheelSpeeds(setpointStates, config.maxLinearSpeedMps());
+    SwerveDriveKinematics.desaturateWheelSpeeds(setpointStates, runtimeMaxLinearSpeedMps);
 
     for (int i = 0; i < 4; i++) {
       modules[i].runSetpoint(setpointStates[i]);
@@ -336,7 +342,36 @@ public class Drive extends SubsystemBase {
   }
 
   public double getMaxLinearSpeedMps() {
-    return config.maxLinearSpeedMps();
+    return runtimeMaxLinearSpeedMps;
+  }
+
+  public double getMaxAngularSpeedRadPerSec() {
+    return runtimeMaxAngularSpeedRadPerSec;
+  }
+
+  public double getRuntimeDriveKp() {
+    return runtimeDriveKp;
+  }
+
+  /** Applies live practice speed limits in memory without touching deploy/configs CSVs. */
+  public void setRuntimeSpeedLimits(double maxLinearSpeedMps, double maxAngularSpeedRadPerSec) {
+    if (Double.isFinite(maxLinearSpeedMps) && maxLinearSpeedMps > 0.0) {
+      this.runtimeMaxLinearSpeedMps = MathUtil.clamp(maxLinearSpeedMps, 0.2, 6.0);
+    }
+    if (Double.isFinite(maxAngularSpeedRadPerSec) && maxAngularSpeedRadPerSec > 0.0) {
+      this.runtimeMaxAngularSpeedRadPerSec = MathUtil.clamp(maxAngularSpeedRadPerSec, 0.5, 12.5);
+    }
+  }
+
+  /** Applies live practice drive velocity {@code kP} across all 4 swerve corners in memory. */
+  public void setDriveKp(double kP) {
+    if (!Double.isFinite(kP) || kP < 0.0 || Double.compare(kP, runtimeDriveKp) == 0) {
+      return;
+    }
+    this.runtimeDriveKp = kP;
+    for (Module m : modules) {
+      m.setDriveKp(kP);
+    }
   }
 
   public double getRollRad() {

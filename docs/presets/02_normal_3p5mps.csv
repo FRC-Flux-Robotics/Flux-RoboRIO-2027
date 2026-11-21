@@ -1,0 +1,7 @@
+# Starter Behavioral Preset: Normal Practice (3.5 m/s) for open carpet driving on CHASSIS_3
+# Drop into Google Drive FLUX-10413-Hub/code/configs/presets/ and select via FluxTray -> Switch Config
+key,DEFAULT
+maxLinearSpeedMps,3.5
+maxAngularSpeedRadPerSec,4.0
+joystickSensitivity,0.80
+rotationSensitivity,1.00

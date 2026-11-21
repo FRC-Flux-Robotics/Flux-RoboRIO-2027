@@ -26,11 +26,13 @@ public class ModuleIOSim implements ModuleIO {
   private double driveAppliedVolts = 0.0;
   private double turnAppliedVolts = 0.0;
   private double activeStatorLimitAmps;
+  private double runtimeDriveKp;
 
   public ModuleIOSim(SwerveConfig config) {
     this.config = config;
     this.activeStatorLimitAmps =
         Math.min(config.driveStatorLimitAmps(), config.driveSlipCurrentAmps());
+    this.runtimeDriveKp = config.driveKp();
     DCMotor driveMotor = DCMotor.getKrakenX60Foc(1);
     DCMotor turnMotor = DCMotor.getKrakenX60Foc(1);
     this.driveSim =
@@ -68,6 +70,17 @@ public class ModuleIOSim implements ModuleIO {
   }
 
   @Override
+  public void setDriveKp(double kP) {
+    if (Double.isFinite(kP) && kP >= 0.0) {
+      this.runtimeDriveKp = kP;
+    }
+  }
+
+  public double getRuntimeDriveKp() {
+    return runtimeDriveKp;
+  }
+
+  @Override
   public void stop() {
     driveClosedLoop = false;
     turnClosedLoop = false;
@@ -98,7 +111,7 @@ public class ModuleIOSim implements ModuleIO {
         double actualRps = driveSim.getAngularVelocityRadPerSec() / (2.0 * Math.PI);
         double velErrRps = targetRps - actualRps;
         double ff = config.driveKs() * Math.signum(targetRps) + targetRps * config.driveKv();
-        driveAppliedVolts = MathUtil.clamp(ff + velErrRps * config.driveKp(), -12.0, 12.0);
+        driveAppliedVolts = MathUtil.clamp(ff + velErrRps * runtimeDriveKp, -12.0, 12.0);
       }
       if (turnClosedLoop) {
         double angleErr =

@@ -203,6 +203,35 @@ public final class LogFileManager {
       String gitSha,
       String bootTimestampIso)
       throws IOException {
+    return writeRunMetaJson(
+        logDir,
+        robotId,
+        profile,
+        configSha256,
+        batteryName,
+        loopPeriodMs,
+        gitSha,
+        bootTimestampIso,
+        "STABLE",
+        "STABLE");
+  }
+
+  /**
+   * Atomically writes per-run `run-meta.json` summary including deployed `gitSha`, stable
+   * `bootTimestampIso`, and active config channel/preset (`STABLE` vs `EXPERIMENTAL`).
+   */
+  public static Path writeRunMetaJson(
+      Path logDir,
+      String robotId,
+      String profile,
+      String configSha256,
+      String batteryName,
+      int loopPeriodMs,
+      String gitSha,
+      String bootTimestampIso,
+      String configChannel,
+      String configPreset)
+      throws IOException {
     Files.createDirectories(logDir);
     Path metaFile = logDir.resolve("run-meta.json");
     String effectiveGitSha =
@@ -211,6 +240,10 @@ public final class LogFileManager {
         (bootTimestampIso != null && !bootTimestampIso.isBlank())
             ? bootTimestampIso
             : Instant.now().toString();
+    String effectiveChannel =
+        (configChannel != null && !configChannel.isBlank()) ? configChannel.trim() : "STABLE";
+    String effectivePreset =
+        (configPreset != null && !configPreset.isBlank()) ? configPreset.trim() : "STABLE";
     String json =
         "{\n"
             + "  \"robotId\": \""
@@ -224,6 +257,12 @@ public final class LogFileManager {
             + "\",\n"
             + "  \"configSha256\": \""
             + escapeJson(configSha256)
+            + "\",\n"
+            + "  \"configChannel\": \""
+            + escapeJson(effectiveChannel)
+            + "\",\n"
+            + "  \"configPreset\": \""
+            + escapeJson(effectivePreset)
             + "\",\n"
             + "  \"batteryName\": \""
             + escapeJson(batteryName)
