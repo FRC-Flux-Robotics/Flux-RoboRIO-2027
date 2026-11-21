@@ -84,7 +84,7 @@ public final class StudentAutoRoutines {
     (
         Commands.runOnce
         (
-            () -> 
+            () ->
             {
                 drive.setPose(new Pose2d(3.10, 4.05, Rotation2d.kZero));
                 // superstructure.requestState(State.IDLE); // OG code
