@@ -431,6 +431,12 @@ public class RobotContainer {
     drive.warmup();
     shotCalculator.calculate(
         drive.getPose(), new ChassisSpeeds(), FieldPositions.forAlliance(HUB_TARGET_METERS));
+    intake.periodic();
+    tilter.periodic();
+    indexer.periodic();
+    feeder.periodic();
+    shooter.periodic();
+    hood.periodic();
     superstructure.periodic();
     Logger.recordOutput(
         "Superstructure/MechanismPoses3d", new Pose3d[] {Pose3d.kZero, Pose3d.kZero});
