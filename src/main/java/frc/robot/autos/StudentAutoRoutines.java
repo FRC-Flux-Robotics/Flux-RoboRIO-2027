@@ -97,12 +97,12 @@ public final class StudentAutoRoutines {
         ),
         createAimAndShootHubCommand(drive, superstructure, shotCalculator, 2.0),
         Commands.runOnce(() -> superstructure.requestState(State.INTAKING)),
-        driveRelative(drive, 0.0, 0.0, -90.0, 1.2),
-        driveRelative(drive, 0.0, 2.0, 0.0, 4.0),
-        driveRelative(drive, 0.0, 0.0, 180.0, 1.2),
-        driveRelative(drive, 0.0, -4.0, -90.0, 4.0),   
-        waitLoopSeconds(0.25),
-        driveRelative(drive, 0.0, 0.0, 90.0, 1.2),
+        driveRelative(drive, 0.0, 0.0, -90.0, 2.0),
+        driveRelative(drive, 2.0, 0.0, 0.0, 3.0),
+        driveRelative(drive, 0.0, 0.0, 180.0, 2.0),
+        driveRelative(drive, 4.0, 0.0, 0.0, 4.0),
+        driveRelative(drive, 0.0, 0.0, -90.0, 2.0),
+        driveRelative(drive, 0.0, 2.0, 0.0, 3.0),
         createAimAndShootHubCommand(drive, superstructure, shotCalculator, 4.0),
         Commands.runOnce(() -> superstructure.requestState(State.IDLE))
     )
