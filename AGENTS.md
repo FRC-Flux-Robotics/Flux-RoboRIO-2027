@@ -5,7 +5,7 @@
 ---
 
 ## 1. Repository Overview & Key Files
-`Flux-RoboRIO-2027` is the **WPILib 2026 (`edu.wpi.first.*`, JDK 17) roboRIO 2.0 + CTRE CANivore robot codebase** for **FRC Team 10413 (FLUX Robotics)**, combining the `41`-class `frc.lib.*` core engine with our **2026 `FUEL` 6-mechanism shooting stack and `CORAL`/`CHASSIS_3` Ghost Superstructure mode** in `frc.robot.*`:
+`Flux-RoboRIO-2027` is the **WPILib 2026 (`edu.wpi.first.*`, JDK 17) roboRIO 2.0 + CTRE CANivore robot codebase** for **FRC Team 10413 (FLUX Robotics)**, combining the `46`-class `frc.lib.*` core engine with our **2026 `FUEL` 6-mechanism shooting stack and `CORAL`/`CHASSIS_3` Ghost Superstructure mode** in `frc.robot.*`:
 - [`README.md`](README.md) & [`STUDENTS.md`](STUDENTS.md): Repository overview, auto-generated class/dependency map ([`docs/class-map.html`](docs/class-map.html)), `FluxFig` mechanism table, and active `TODO(student)` board.
 - [`STUDENT-CHANGELOG.md`](STUDENT-CHANGELOG.md): Student-readable digest of every code and CSV change.
 - [`src/main/java/frc/robot/exercises/StudentExercises.java`](src/main/java/frc/robot/exercises/StudentExercises.java) & [`src/main/java/frc/robot/autos/StudentAutoRoutines.java`](src/main/java/frc/robot/autos/StudentAutoRoutines.java): 4-level student exercise kit (`./gradlew checkExercises`) and 2026 `FUEL` Hub shooting autonomous sandbox (`./gradlew renderAuto` with [`"Hub to Depot.path"`](src/main/deploy/pathplanner/paths/Hub%20to%20Depot.path)).
@@ -39,7 +39,7 @@ Robots identify at boot via `/home/lvuser/robot-identity.txt` first (exact token
 ---
 
 ## 3. Package Boundaries (`frc.lib.*` vs. `frc.robot.*`) & Loop Standards
-1. **`frc.lib.*` (`41` Core Engine Classes) vs. `frc.robot.*` (`9` 2026 `FUEL` / `CORAL` Classes):**
+1. **`frc.lib.*` (`46` Core Engine Classes) vs. `frc.robot.*` (`9` 2026 `FUEL` / `CORAL` Classes):**
    - `frc.lib.*` (`drive`, `vision`, `mechanism`, `safety`, `commands`, `util`) must **never** import `frc.robot.*` (enforced by `Tier1ArchitectureHygieneTest.testFrcLibNeverImportsFrcRobotMechanisms`).
    - Students edit `frc.robot.*` (`RobotContainer.java`, `Superstructure.java`, `ShotCalculator.java`, `ShotCalibrationCmd.java`, `StudentAutoRoutines.java`, `StudentExercises.java`) and `src/main/deploy/configs/{mechanisms,range_table}.csv`.
 2. **Pure AdvantageKit IO & Zero `SmartDashboard` / `Preferences`:**
