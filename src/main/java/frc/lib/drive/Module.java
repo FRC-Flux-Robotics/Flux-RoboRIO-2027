@@ -61,8 +61,50 @@ public class Module {
     io.stop();
   }
 
+  public void setLoopPeriodSeconds(double loopPeriodSec) {
+    io.setLoopPeriodSeconds(loopPeriodSec);
+  }
+
   public void setDriveKp(double kP) {
     io.setDriveKp(kP);
+  }
+
+  /** Commands open-loop drive voltage while holding steer at 0 deg for translation SysId. */
+  public void runDriveCharacterization(double volts) {
+    io.setTurnPosition(Rotation2d.kZero);
+    io.setDriveOpenLoop(volts);
+  }
+
+  /** Commands open-loop steer voltage with drive stopped for steer SysId. */
+  public void runSteerCharacterization(double volts) {
+    io.setDriveOpenLoop(0.0);
+    io.setTurnOpenLoop(volts);
+  }
+
+  /** Commands open-loop drive voltage tangent to the chassis circle for rotation SysId. */
+  public void runRotationCharacterization(Rotation2d tangentAngle, double volts) {
+    io.setTurnPosition(tangentAngle);
+    io.setDriveOpenLoop(volts);
+  }
+
+  public double getWheelPositionRad() {
+    return inputs.drivePositionRad;
+  }
+
+  public double getWheelVelocityRadPerSec() {
+    return inputs.driveVelocityRadPerSec;
+  }
+
+  public double getDriveAppliedVolts() {
+    return inputs.driveAppliedVolts;
+  }
+
+  public double getTurnAppliedVolts() {
+    return inputs.turnAppliedVolts;
+  }
+
+  public double getTurnVelocityRadPerSec() {
+    return inputs.turnVelocityRadPerSec;
   }
 
   public Rotation2d getAngle() {

@@ -19,6 +19,7 @@ __pycache__/
 hs_err_pid*
 replay_pid*
 
-# Explicitly keep committed FluxFig library & Gradle wrapper
+# Explicitly keep committed FluxFig library, Gradle wrapper, and Tier 5 replay fixture
 !libs/fluxfig-1.0.0.jar
 !gradle/wrapper/gradle-wrapper.jar
+!src/test/resources/replay/*.wpilog

@@ -8,7 +8,7 @@
         "layouts": [],
         "containers": [
           {
-            "title": "Field (2027 Center/Red)",
+            "title": "Field (2026 Wall/Blue)",
             "x": 0.0,
             "y": 0.0,
             "width": 640.0,
@@ -127,14 +127,14 @@
             }
           },
           {
-            "title": "Mechanism At Target",
+            "title": "Ready To Fire",
             "x": 896.0,
             "y": 256.0,
             "width": 128.0,
             "height": 128.0,
             "type": "Boolean Box",
             "properties": {
-              "topic": "/AdvantageKit/RealOutputs/Superstructure/AtTarget",
+              "topic": "/AdvantageKit/RealOutputs/Superstructure/ReadyToFire",
               "period": 0.033,
               "color_when_true": 4278255360,
               "color_when_false": 4294901760
@@ -148,7 +148,7 @@
             "height": 128.0,
             "type": "Text Display",
             "properties": {
-              "topic": "/AdvantageKit/RealOutputs/FaultSupervisor/ActiveDriveStatorLimitAmps",
+              "topic": "/AdvantageKit/RealOutputs/Drive/ActiveStatorLimitAmps",
               "period": 0.033,
               "show_submit_button": false
             }

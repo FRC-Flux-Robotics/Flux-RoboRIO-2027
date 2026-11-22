@@ -186,6 +186,29 @@ public final class SafeAutoBuilder {
       Supplier<ChassisSpeeds> velocitySupplier,
       Consumer<ChassisSpeeds> stopConsumer,
       Limits limits) {
+    return wrap(
+        innerCommand,
+        pathPoses,
+        pathMaxVelMps,
+        poseSupplier,
+        velocitySupplier,
+        stopConsumer,
+        limits,
+        () -> 0.020);
+  }
+
+  /** Wraps an autonomous command with pre-flight and runtime path/collision monitoring at {@code dt}. */
+  public static Command wrap(
+      Command innerCommand,
+      List<Pose2d> pathPoses,
+      double pathMaxVelMps,
+      Supplier<Pose2d> poseSupplier,
+      Supplier<ChassisSpeeds> velocitySupplier,
+      Consumer<ChassisSpeeds> stopConsumer,
+      Limits limits,
+      DoubleSupplier loopPeriodSecSupplier) {
+    DoubleSupplier safeDtSupplier =
+        (loopPeriodSecSupplier != null) ? loopPeriodSecSupplier : () -> 0.020;
     return new Command() {
       private boolean cancelled = false;
       private double prevSpeed = 0.0;
@@ -242,7 +265,8 @@ public final class SafeAutoBuilder {
           return;
         }
 
-        double decel = (prevSpeed - speed) / 0.020;
+        double dt = Math.max(0.002, safeDtSupplier.getAsDouble());
+        double decel = (prevSpeed - speed) / dt;
         if (decel > limits.collisionDecelMps2() && prevSpeed > limits.collisionMinSpeedMps()) {
           collisionCycles++;
         } else {
@@ -349,7 +373,8 @@ public final class SafeAutoBuilder {
           poseSupplier,
           velocitySupplier,
           robotRelativeVelocityConsumer,
-          Limits.DEFAULT);
+          Limits.DEFAULT,
+          loopPeriodSecSupplier);
     } catch (Exception e) {
       DriverStation.reportError("Failed to load PathPlanner path: " + pathName, e.getStackTrace());
       Logger.recordOutput("Auto/Status", "LOAD_ERROR: " + pathName);
@@ -381,7 +406,14 @@ public final class SafeAutoBuilder {
    * simulation without mutating global HAL clock state.
    */
   public static Command withLoopTimeout(Command command, double timeoutSeconds) {
-    final int maxLoops = Math.max(1, (int) Math.round(timeoutSeconds / 0.020));
+    return withLoopTimeout(command, timeoutSeconds, 0.020);
+  }
+
+  /** Wraps {@code command} with a deterministic loop-count timeout parameterized on {@code dt}. */
+  public static Command withLoopTimeout(
+      Command command, double timeoutSeconds, double loopPeriodSec) {
+    double safeDt = (Double.isFinite(loopPeriodSec) && loopPeriodSec > 0.0) ? loopPeriodSec : 0.020;
+    final int maxLoops = Math.max(1, (int) Math.round(timeoutSeconds / safeDt));
     final int[] loops = {0};
     return command
         .beforeStarting(() -> loops[0] = 0)
@@ -398,10 +430,15 @@ public final class SafeAutoBuilder {
    * robot and in fast-forward {@code ./gradlew renderAuto} simulation.
    */
   public static Command waitLoopSeconds(double durationSeconds) {
+    return waitLoopSeconds(durationSeconds, 0.020);
+  }
+
+  /** Pauses a command sequence for {@code durationSeconds} parameterized on loop period {@code dt}. */
+  public static Command waitLoopSeconds(double durationSeconds, double loopPeriodSec) {
     if (durationSeconds <= 0.0) {
       return Commands.none();
     }
-    return withLoopTimeout(Commands.idle(), durationSeconds);
+    return withLoopTimeout(Commands.idle(), durationSeconds, loopPeriodSec);
   }
 
   private static Command createDeterministicPathCommand(

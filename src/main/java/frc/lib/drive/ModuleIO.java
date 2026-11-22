@@ -100,6 +100,8 @@ public interface ModuleIO {
 
   default void setDriveKp(double kP) {}
 
+  default void setLoopPeriodSeconds(double loopPeriodSec) {}
+
   default void stop() {}
 
   default void warmup() {}

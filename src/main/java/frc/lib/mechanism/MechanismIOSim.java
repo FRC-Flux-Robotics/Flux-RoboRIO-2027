@@ -29,6 +29,8 @@ public class MechanismIOSim implements MechanismIO {
 
   private final MechanismSpec spec;
   private final SimPlantType plantType;
+  private final DCMotor motorModel;
+  private final double effectiveGearing;
   private final DCMotorSim dcSim;
   private final ElevatorSim elevatorSim;
   private final SingleJointedArmSim armSim;
@@ -41,6 +43,7 @@ public class MechanismIOSim implements MechanismIO {
   private double kV;
   private double kG;
 
+  private double loopPeriodSec = 0.020;
   private double appliedVolts = 0.0;
   private double targetPosRot = 0.0;
   private double targetVelRps = 0.0;
@@ -57,10 +60,12 @@ public class MechanismIOSim implements MechanismIO {
     this.kG = spec.kG();
 
     DCMotor kraken = DCMotor.getKrakenX60Foc(1);
+    this.motorModel = kraken;
     double gearing = Math.max(1.0, spec.gearRatio());
 
     if ("ELEVATOR_STATIC".equalsIgnoreCase(spec.gravityType())) {
       this.plantType = SimPlantType.ELEVATOR_STATIC;
+      this.effectiveGearing = gearing;
       double minMeters = Math.max(0.0, spec.minPosRot() * ELEVATOR_METERS_PER_ROTATION);
       double maxMeters = Math.max(minMeters + 0.1, spec.maxPosRot() * ELEVATOR_METERS_PER_ROTATION);
       this.elevatorSim =
@@ -79,6 +84,7 @@ public class MechanismIOSim implements MechanismIO {
     } else if ("ARM_COSINE".equalsIgnoreCase(spec.gravityType())) {
       this.plantType = SimPlantType.ARM_COSINE;
       double armGearing = (spec.gearRatio() > 1.5) ? spec.gearRatio() : 40.0;
+      this.effectiveGearing = armGearing;
       double spanRot = Math.abs(spec.maxPosRot() - spec.minPosRot());
       this.armRadPerPosRot = (spanRot > 2.0) ? (2.0 * Math.PI / armGearing) : (2.0 * Math.PI);
       double minRad = spec.minPosRot() * this.armRadPerPosRot;
@@ -91,6 +97,7 @@ public class MechanismIOSim implements MechanismIO {
       this.dcSim = null;
     } else {
       this.plantType = SimPlantType.DC_MOTOR;
+      this.effectiveGearing = gearing;
       this.dcSim = new DCMotorSim(LinearSystemId.createDCMotorSystem(kraken, 0.002, gearing), kraken);
       this.elevatorSim = null;
       this.armSim = null;
@@ -131,6 +138,17 @@ public class MechanismIOSim implements MechanismIO {
     this.kS = kS;
     this.kV = kV;
     this.kG = kG;
+  }
+
+  @Override
+  public void setLoopPeriodSeconds(double loopPeriodSec) {
+    if (Double.isFinite(loopPeriodSec) && loopPeriodSec > 0.0) {
+      this.loopPeriodSec = MathUtil.clamp(loopPeriodSec, 0.002, 0.100);
+    }
+  }
+
+  public double getLoopPeriodSeconds() {
+    return loopPeriodSec;
   }
 
   @Override
@@ -176,18 +194,30 @@ public class MechanismIOSim implements MechanismIO {
               12.0);
     }
 
+    double rotorRadPerSec =
+        (plantType == SimPlantType.ARM_COSINE)
+            ? armSim.getVelocityRadPerSec() * effectiveGearing
+            : velRps * 2.0 * Math.PI * effectiveGearing;
+    double backEmfVolts = rotorRadPerSec / motorModel.KvRadPerSecPerVolt;
+    double maxStatorDeltaV = Math.max(0.0, spec.statorLimitAmps()) * motorModel.rOhms;
+    // Match TalonFX FOC buck-converter behavior: clamp PWM motor voltage to the stator current
+    // ceiling before stepping physics so startup battery supply draw reflects actual V_motor / 12 V.
+    double clampedVolts =
+        MathUtil.clamp(
+            appliedVolts, backEmfVolts - maxStatorDeltaV, backEmfVolts + maxStatorDeltaV);
+
     double rawCurrentA;
     if (plantType == SimPlantType.ELEVATOR_STATIC) {
-      elevatorSim.setInputVoltage(appliedVolts);
-      elevatorSim.update(0.020);
+      elevatorSim.setInputVoltage(clampedVolts);
+      elevatorSim.update(loopPeriodSec);
       rawCurrentA = elevatorSim.getCurrentDrawAmps();
     } else if (plantType == SimPlantType.ARM_COSINE) {
-      armSim.setInputVoltage(appliedVolts);
-      armSim.update(0.020);
+      armSim.setInputVoltage(clampedVolts);
+      armSim.update(loopPeriodSec);
       rawCurrentA = armSim.getCurrentDrawAmps();
     } else {
-      dcSim.setInputVoltage(appliedVolts);
-      dcSim.update(0.020);
+      dcSim.setInputVoltage(clampedVolts);
+      dcSim.update(loopPeriodSec);
       rawCurrentA = dcSim.getCurrentDrawAmps();
     }
 
@@ -199,8 +229,8 @@ public class MechanismIOSim implements MechanismIO {
     inputs.statorCurrentA = perMotorStator;
     inputs.supplyCurrentA =
         Math.min(
-            spec.supplyLimitAmps(), inputs.statorCurrentA * (Math.abs(appliedVolts) / 12.0));
-    inputs.appliedVoltage = appliedVolts;
+            spec.supplyLimitAmps(), inputs.statorCurrentA * (Math.abs(clampedVolts) / 12.0));
+    inputs.appliedVoltage = clampedVolts;
     inputs.tempCelsius = 25.0;
     inputs.motorConnected = true;
   }

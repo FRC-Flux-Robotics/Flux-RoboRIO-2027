@@ -35,7 +35,64 @@ public record SwerveConfig(
     double turnKp,
     double turnKd,
     CornerConfig[] corners,
-    double odometryFrequencyHz) {
+    double odometryFrequencyHz,
+    double couplingRatio) {
+
+  /** Default CTRE coaxial swerve azimuth-to-drive coupling gear ratio (4.5:1 on MK4i/MK4n). */
+  public static final double DEFAULT_COUPLING_RATIO = 4.5;
+
+  public SwerveConfig(
+      String canBus,
+      int pigeonId,
+      double trackWidthMeters,
+      double wheelBaseMeters,
+      double wheelRadiusMeters,
+      double driveGearRatio,
+      double turnGearRatio,
+      double maxLinearSpeedMps,
+      double maxAngularSpeedRadPerSec,
+      double driveStatorLimitAmps,
+      double driveSupplyLimitAmps,
+      double driveSlipCurrentAmps,
+      double turnStatorLimitAmps,
+      double turnSupplyLimitAmps,
+      double driveKp,
+      double driveKi,
+      double driveKd,
+      double driveKs,
+      double driveKv,
+      double driveKa,
+      double turnKp,
+      double turnKd,
+      CornerConfig[] corners,
+      double odometryFrequencyHz) {
+    this(
+        canBus,
+        pigeonId,
+        trackWidthMeters,
+        wheelBaseMeters,
+        wheelRadiusMeters,
+        driveGearRatio,
+        turnGearRatio,
+        maxLinearSpeedMps,
+        maxAngularSpeedRadPerSec,
+        driveStatorLimitAmps,
+        driveSupplyLimitAmps,
+        driveSlipCurrentAmps,
+        turnStatorLimitAmps,
+        turnSupplyLimitAmps,
+        driveKp,
+        driveKi,
+        driveKd,
+        driveKs,
+        driveKv,
+        driveKa,
+        turnKp,
+        turnKd,
+        corners,
+        odometryFrequencyHz,
+        DEFAULT_COUPLING_RATIO);
+  }
 
   public SwerveConfig(
       String canBus,
@@ -85,7 +142,8 @@ public record SwerveConfig(
         turnKp,
         turnKd,
         corners,
-        PhoenixOdometryThread.resolveFrequencyHz(canBus, 0.0));
+        PhoenixOdometryThread.resolveFrequencyHz(canBus, 0.0),
+        DEFAULT_COUPLING_RATIO);
   }
 
   /**
@@ -138,6 +196,10 @@ public record SwerveConfig(
       double wheelRadiusM = fig.getDouble("wheelRadiusMeters");
       double driveGearRatio = fig.getDouble("driveGearRatio");
       double turnGearRatio = fig.getDouble("turnGearRatio");
+      double couplingRatio =
+          fig.hasParameter("swerveCouplingRatio")
+              ? fig.getDouble("swerveCouplingRatio")
+              : DEFAULT_COUPLING_RATIO;
       double configuredOdomHz =
           fig.hasParameter("odometryFrequencyHz") ? fig.getDouble("odometryFrequencyHz") : 0.0;
       double odomFreqHz = PhoenixOdometryThread.resolveFrequencyHz(canBus, configuredOdomHz);
@@ -176,7 +238,8 @@ public record SwerveConfig(
           15.0,
           0.9,
           corners,
-          odomFreqHz);
+          odomFreqHz,
+          couplingRatio);
     } finally {
       fig.setActiveProfile(prevProfile);
     }

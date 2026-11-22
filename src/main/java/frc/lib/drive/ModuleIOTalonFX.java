@@ -28,6 +28,7 @@ import edu.wpi.first.units.measure.Voltage;
 import frc.lib.drive.SwerveConfig.CornerConfig;
 import frc.lib.util.PhoenixSignals;
 import frc.lib.util.PhoenixUtil;
+import java.util.List;
 import java.util.Locale;
 import java.util.Queue;
 
@@ -74,6 +75,7 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
   private final int driveSignalGroup;
   private final int turnSignalGroup;
   private final boolean usingFusedCancoder;
+  private final double couplingWheelPerSteerRot;
   private final Queue<Double> timestampQueue;
   private final Queue<Double> drivePositionQueue;
   private final Queue<Double> turnPositionQueue;
@@ -95,6 +97,10 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
     }
 
     this.swerveConfig = swerveConfig;
+    this.couplingWheelPerSteerRot =
+        (swerveConfig.driveGearRatio() > 1e-6)
+            ? (swerveConfig.couplingRatio() / swerveConfig.driveGearRatio())
+            : 0.0;
     double bootStatorLimitAmps =
         Math.min(swerveConfig.driveStatorLimitAmps(), swerveConfig.driveSlipCurrentAmps());
 
@@ -340,6 +346,19 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
     turnTalon.setControl(neutralReq);
   }
 
+  /**
+   * Removes coaxial swerve azimuth-to-drive bevel gear coupling from wheel rotations: rotating the
+   * steer shaft by {@code turnRot} introduces {@code couplingRatio / driveGearRatio} phantom wheel
+   * rotations on the drive encoder.
+   */
+  public static double compensateDriveRotationsForAzimuth(
+      double rawDriveWheelRot, double turnRot, double couplingRatio, double driveGearRatio) {
+    if (driveGearRatio <= 1e-6) {
+      return rawDriveWheelRot;
+    }
+    return rawDriveWheelRot - (turnRot * couplingRatio / driveGearRatio);
+  }
+
   @Override
   public void updateInputs(ModuleIOInputs inputs) {
     inputs.driveAppliedVolts = driveAppliedVolts.getValueAsDouble();
@@ -352,52 +371,75 @@ public class ModuleIOTalonFX implements ModuleIO, AutoCloseable {
     inputs.turnStatorCurrentAmps = turnStatorCurrent.getValueAsDouble();
     inputs.turnSupplyCurrentAmps = turnSupplyCurrent.getValueAsDouble();
 
+    double rawDrivePosRot = drivePosition.getValueAsDouble();
+    double rawDriveVelRps = driveVelocity.getValueAsDouble();
+    double rawTurnPosRot = turnPosition.getValueAsDouble();
+    double rawTurnVelRps = turnVelocity.getValueAsDouble();
+    boolean driveSigOk = drivePosition.getStatus().isOK() && driveVelocity.getStatus().isOK();
+    boolean turnSigOk = turnPosition.getStatus().isOK() && turnVelocity.getStatus().isOK();
+
+    inputs.driveConnected = PhoenixSignals.isOK(driveSignalGroup) && driveSigOk;
+    inputs.drivePositionRad =
+        Units.rotationsToRadians(rawDrivePosRot - rawTurnPosRot * couplingWheelPerSteerRot);
+    inputs.driveVelocityRadPerSec =
+        Units.rotationsToRadians(rawDriveVelRps - rawTurnVelRps * couplingWheelPerSteerRot);
+
+    inputs.turnConnected = PhoenixSignals.isOK(turnSignalGroup) && turnSigOk;
+    inputs.turnPosition = Rotation2d.fromRotations(rawTurnPosRot);
+    inputs.turnVelocityRadPerSec = Units.rotationsToRadians(rawTurnVelRps);
+
+    double[] drainedTimestamps;
+    double[] drainedDriveRot;
+    double[] drainedTurnRot;
     PhoenixOdometryThread.ODOMETRY_LOCK.lock();
     try {
-      inputs.driveConnected =
-          PhoenixSignals.isOK(driveSignalGroup)
-              && drivePosition.getStatus().isOK()
-              && driveVelocity.getStatus().isOK();
-      inputs.drivePositionRad = Units.rotationsToRadians(drivePosition.getValueAsDouble());
-      inputs.driveVelocityRadPerSec = Units.rotationsToRadians(driveVelocity.getValueAsDouble());
-
-      inputs.turnConnected =
-          PhoenixSignals.isOK(turnSignalGroup)
-              && turnPosition.getStatus().isOK()
-              && turnVelocity.getStatus().isOK();
-      inputs.turnPosition = Rotation2d.fromRotations(turnPosition.getValueAsDouble());
-      inputs.turnVelocityRadPerSec = Units.rotationsToRadians(turnVelocity.getValueAsDouble());
-
-      int nTimestamps = timestampQueue.size();
-      inputs.odometryTimestamps = new double[nTimestamps];
-      for (int i = 0; i < nTimestamps; i++) {
+      int n =
+          Math.min(
+              timestampQueue.size(),
+              Math.min(drivePositionQueue.size(), turnPositionQueue.size()));
+      drainedTimestamps = new double[n];
+      drainedDriveRot = new double[n];
+      drainedTurnRot = new double[n];
+      for (int i = 0; i < n; i++) {
         Double ts = timestampQueue.poll();
-        inputs.odometryTimestamps[i] = (ts != null) ? ts : 0.0;
+        Double dRot = drivePositionQueue.poll();
+        Double tRot = turnPositionQueue.poll();
+        drainedTimestamps[i] = (ts != null) ? ts : 0.0;
+        drainedDriveRot[i] = (dRot != null) ? dRot : rawDrivePosRot;
+        drainedTurnRot[i] = (tRot != null) ? tRot : rawTurnPosRot;
       }
-
-      int nDrive = drivePositionQueue.size();
-      inputs.odometryDrivePositionsRad = new double[nDrive];
-      for (int i = 0; i < nDrive; i++) {
-        Double rot = drivePositionQueue.poll();
-        inputs.odometryDrivePositionsRad[i] =
-            (rot != null) ? Units.rotationsToRadians(rot) : inputs.drivePositionRad;
+      // Discard any trailing mismatched queue entries if a queue overflowed asynchronously.
+      while (timestampQueue.size() > 0 && (drivePositionQueue.isEmpty() || turnPositionQueue.isEmpty())) {
+        timestampQueue.poll();
       }
-
-      int nTurn = turnPositionQueue.size();
-      inputs.odometryTurnPositions = new Rotation2d[nTurn];
-      for (int i = 0; i < nTurn; i++) {
-        Double rot = turnPositionQueue.poll();
-        inputs.odometryTurnPositions[i] =
-            (rot != null) ? Rotation2d.fromRotations(rot) : inputs.turnPosition;
+      while (drivePositionQueue.size() > 0 && (timestampQueue.isEmpty() || turnPositionQueue.isEmpty())) {
+        drivePositionQueue.poll();
+      }
+      while (turnPositionQueue.size() > 0 && (timestampQueue.isEmpty() || drivePositionQueue.isEmpty())) {
+        turnPositionQueue.poll();
       }
     } finally {
       PhoenixOdometryThread.ODOMETRY_LOCK.unlock();
+    }
+
+    inputs.odometryTimestamps = drainedTimestamps;
+    inputs.odometryDrivePositionsRad = new double[drainedDriveRot.length];
+    inputs.odometryTurnPositions = new Rotation2d[drainedTurnRot.length];
+    for (int i = 0; i < drainedDriveRot.length; i++) {
+      double compensatedDriveRot =
+          drainedDriveRot[i] - drainedTurnRot[i] * couplingWheelPerSteerRot;
+      inputs.odometryDrivePositionsRad[i] = Units.rotationsToRadians(compensatedDriveRot);
+      inputs.odometryTurnPositions[i] = Rotation2d.fromRotations(drainedTurnRot[i]);
     }
   }
 
   @Override
   public void close() {
-    PhoenixOdometryThread.getInstance().reset();
+    PhoenixOdometryThread.getInstance()
+        .unregisterConsumer(
+            List.of(drivePosition, driveVelocity, turnPosition, turnVelocity),
+            List.of(drivePositionQueue, turnPositionQueue),
+            timestampQueue);
     driveTalon.close();
     turnTalon.close();
     cancoder.close();

@@ -19,6 +19,7 @@
   <path d="M 248 630.0 C 264.0 630.0, 264.0 102.0, 280 102.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 248 630.0 C 520.0 630.0, 520.0 234.0, 792 234.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 248 630.0 C 520.0 630.0, 520.0 366.0, 792 366.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 248 630.0 C 264.0 630.0, 264.0 234.0, 280 234.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 248 696.0 C 264.0 696.0, 264.0 102.0, 280 102.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 248 894.0 C 264.0 894.0, 264.0 432.0, 280 432.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 248 828.0 C 264.0 828.0, 264.0 102.0, 280 102.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
@@ -39,7 +40,6 @@
   <path d="M 504 102.0 C 520.0 102.0, 520.0 300.0, 536 300.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 392.0 128 L 392.0 142" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 504 102.0 C 520.0 102.0, 520.0 102.0, 536 102.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
-  <path d="M 392.0 128 L 392.0 274" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 504 102.0 C 648.0 102.0, 648.0 432.0, 792 432.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 392.0 128 L 392.0 208" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 392.0 128 L 392.0 538" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
@@ -47,10 +47,14 @@
   <path d="M 536 366.0 C 520.0 366.0, 520.0 300.0, 504 300.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 760 366.0 C 776.0 366.0, 776.0 564.0, 792 564.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 760 366.0 C 776.0 366.0, 776.0 630.0, 792 630.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 504 960.0 C 520.0 960.0, 520.0 300.0, 536 300.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 504 960.0 C 520.0 960.0, 520.0 234.0, 536 234.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 392.0 934 L 392.0 260" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 392.0 142 L 392.0 128" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 504 168.0 C 520.0 168.0, 520.0 102.0, 536 102.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 648.0 208 L 648.0 128" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 536 234.0 C 520.0 234.0, 520.0 234.0, 504 234.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 760 234.0 C 776.0 234.0, 776.0 498.0, 792 498.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 536 168.0 C 520.0 168.0, 520.0 102.0, 504 102.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 536 168.0 C 520.0 168.0, 520.0 168.0, 504 168.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 648.0 142 L 648.0 128" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
@@ -73,6 +77,15 @@
   <path d="M 392.0 524 L 392.0 604" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 504 498.0 C 648.0 498.0, 648.0 300.0, 792 300.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 504 498.0 C 520.0 498.0, 520.0 696.0, 536 696.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 536 894.0 C 520.0 894.0, 520.0 762.0, 504 762.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 536 894.0 C 520.0 894.0, 520.0 828.0, 504 828.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 536 894.0 C 520.0 894.0, 520.0 894.0, 504 894.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 504 762.0 C 520.0 762.0, 520.0 894.0, 536 894.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 392.0 788 L 392.0 868" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 504 828.0 C 520.0 828.0, 520.0 894.0, 536 894.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 392.0 802 L 392.0 788" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 504 828.0 C 648.0 828.0, 648.0 498.0, 792 498.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 504 894.0 C 520.0 894.0, 520.0 894.0, 536 894.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 792 234.0 C 520.0 234.0, 520.0 960.0, 248 960.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 904.0 340 L 904.0 326" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 904.0 406 L 904.0 260" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
@@ -94,6 +107,9 @@
   <path d="M 136.0 194 L 136.0 208" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 136.0 194 L 136.0 340" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 248 234.0 C 392.0 234.0, 392.0 894.0, 536 894.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 248 234.0 C 264.0 234.0, 264.0 762.0, 280 762.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 248 234.0 C 264.0 234.0, 264.0 828.0, 280 828.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 248 234.0 C 264.0 234.0, 264.0 894.0, 280 894.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 136.0 260 L 136.0 1066" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 248 234.0 C 264.0 234.0, 264.0 102.0, 280 102.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 136.0 260 L 136.0 604" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
@@ -102,6 +118,7 @@
   <path d="M 248 234.0 C 520.0 234.0, 520.0 234.0, 792 234.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 248 234.0 C 392.0 234.0, 392.0 300.0, 536 300.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 248 234.0 C 392.0 234.0, 392.0 366.0, 536 366.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 248 234.0 C 264.0 234.0, 264.0 960.0, 280 960.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 136.0 260 L 136.0 868" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 248 234.0 C 520.0 234.0, 520.0 300.0, 792 300.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 248 234.0 C 392.0 234.0, 392.0 696.0, 536 696.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
@@ -160,7 +177,7 @@
   <path d="M 760 762.0 C 776.0 762.0, 776.0 168.0, 792 168.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 504 432.0 C 648.0 432.0, 648.0 168.0, 792 168.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 504 498.0 C 648.0 498.0, 648.0 168.0, 792 168.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
-  <path d="M 760 894.0 C 776.0 894.0, 776.0 168.0, 792 168.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
+  <path d="M 504 894.0 C 648.0 894.0, 648.0 168.0, 792 168.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 904.0 868 L 904.0 194" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 504 366.0 C 648.0 366.0, 648.0 168.0, 792 168.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
   <path d="M 760 432.0 C 776.0 432.0, 776.0 168.0, 792 168.0" fill="none" stroke="#2B7BFF" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#arrow)"/>
@@ -180,12 +197,12 @@
   <g transform="translate(24, 142)">
     <rect width="224" height="52" rx="7" fill="#254BA0" stroke="#2B7BFF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">Robot</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.robot · 318L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.robot · 416L</text>
   </g>
   <g transform="translate(24, 208)">
     <rect width="224" height="52" rx="7" fill="#254BA0" stroke="#2B7BFF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">RobotContainer</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.robot · 1075L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.robot · 1195L</text>
   </g>
   <g transform="translate(24, 274)">
     <rect width="224" height="52" rx="7" fill="#254BA0" stroke="#2B7BFF" stroke-width="1.6"/>
@@ -205,7 +222,7 @@
   <g transform="translate(24, 472)">
     <rect width="224" height="52" rx="7" fill="#254BA0" stroke="#2B7BFF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">StudentAutoRoutines</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.robot.autos · 465L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.robot.autos · 485L</text>
   </g>
   <g transform="translate(24, 538)">
     <rect width="224" height="52" rx="7" fill="#254BA0" stroke="#2B7BFF" stroke-width="1.6"/>
@@ -215,7 +232,7 @@
   <g transform="translate(24, 604)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">DriveCommands</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.commands · 217L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.commands · 318L</text>
   </g>
   <g transform="translate(24, 670)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
@@ -255,22 +272,22 @@
   <g transform="translate(280, 76)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">Drive</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 456L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 552L</text>
   </g>
   <g transform="translate(280, 142)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">Module</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 115L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 157L</text>
   </g>
   <g transform="translate(280, 208)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">SwerveConfig</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 234L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 297L</text>
   </g>
   <g transform="translate(280, 274)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">PhoenixOdometryThread</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 265L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 308L</text>
   </g>
   <g transform="translate(280, 340)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
@@ -302,20 +319,40 @@
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">ZeroPriorBootstrapSolver</text>
     <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.vision · 95L</text>
   </g>
+  <g transform="translate(280, 736)">
+    <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
+    <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">BatteryIOBfgCan</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.safety · 404L</text>
+  </g>
+  <g transform="translate(280, 802)">
+    <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
+    <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">BatteryIOSim</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.safety · 96L</text>
+  </g>
+  <g transform="translate(280, 868)">
+    <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
+    <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">BatteryMonitor</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.safety · 254L</text>
+  </g>
+  <g transform="translate(280, 934)">
+    <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
+    <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">GyroIOSim</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 92L</text>
+  </g>
   <g transform="translate(536, 76)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">ModuleIO</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 106L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 108L</text>
   </g>
   <g transform="translate(536, 142)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">ModuleIOTalonFX</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 405L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 447L</text>
   </g>
   <g transform="translate(536, 208)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">ModuleIOSim</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 162L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 284L</text>
   </g>
   <g transform="translate(536, 274)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
@@ -325,7 +362,7 @@
   <g transform="translate(536, 340)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">GyroIOPigeon2</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 122L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.drive · 162L</text>
   </g>
   <g transform="translate(536, 406)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
@@ -350,7 +387,7 @@
   <g transform="translate(536, 670)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">MechanismIO</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.mechanism · 66L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.mechanism · 68L</text>
   </g>
   <g transform="translate(536, 736)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
@@ -360,12 +397,12 @@
   <g transform="translate(536, 802)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">MechanismIOSim</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.mechanism · 225L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.mechanism · 237L</text>
   </g>
   <g transform="translate(536, 868)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">BatteryIO</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.safety · 657L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.safety · 138L</text>
   </g>
   <g transform="translate(792, 76)">
     <rect width="224" height="52" rx="7" fill="#254BA0" stroke="#2B7BFF" stroke-width="1.6"/>
@@ -395,7 +432,7 @@
   <g transform="translate(792, 406)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>
     <text x="12" y="21" fill="#FFFFFF" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12.5" font-weight="700">SafeAutoBuilder</text>
-    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.util · 669L</text>
+    <text x="12" y="39" fill="#DEDEDE" font-family="system-ui, -apple-system, sans-serif" font-size="11">frc.lib.util · 706L</text>
   </g>
   <g transform="translate(792, 472)">
     <rect width="224" height="52" rx="7" fill="#2B303A" stroke="#BFBFBF" stroke-width="1.6"/>

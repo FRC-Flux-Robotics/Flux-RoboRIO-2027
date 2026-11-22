@@ -31,12 +31,18 @@ public final class PhoenixOdometryThread {
 
   private static PhoenixOdometryThread instance = null;
 
+  /**
+   * Serializes blocking CAN {@code refreshAll} calls without holding {@link #ODOMETRY_LOCK}, so the
+   * 50 Hz robot loop never blocks on CAN bus I/O while draining odometry queues.
+   */
+  private final Lock canRefreshLock = new ReentrantLock();
+
   private final List<BaseStatusSignal> allSignals = new ArrayList<>();
   private final List<DoubleSupplier> signalSuppliers = new ArrayList<>();
   private final List<Queue<Double>> signalQueues = new ArrayList<>();
   private final List<Queue<Double>> timestampQueues = new ArrayList<>();
-  private final Queue<Double> timestampQueue = new ArrayBlockingQueue<>(32);
-  private BaseStatusSignal[] cachedSignals = new BaseStatusSignal[0];
+  private volatile BaseStatusSignal[] cachedSignals = new BaseStatusSignal[0];
+  private double[] sampleScratch = new double[0];
   private volatile double odometryFrequencyHz = ODOMETRY_FREQUENCY_HZ;
   private final Thread thread;
 
@@ -167,32 +173,53 @@ public final class PhoenixOdometryThread {
   }
 
   public void sampleOnce(double timestampSeconds) {
-    ODOMETRY_LOCK.lock();
+    canRefreshLock.lock();
     try {
-      if (cachedSignals.length > 0) {
-        BaseStatusSignal.refreshAll(cachedSignals);
+      BaseStatusSignal[] signals;
+      DoubleSupplier[] suppliers;
+      ODOMETRY_LOCK.lock();
+      try {
+        signals = cachedSignals;
+        suppliers = signalSuppliers.toArray(new DoubleSupplier[0]);
+      } finally {
+        ODOMETRY_LOCK.unlock();
       }
-      if (!timestampQueue.offer(timestampSeconds)) {
-        timestampQueue.poll();
-        timestampQueue.offer(timestampSeconds);
+
+      // Blocking CAN refresh runs strictly outside ODOMETRY_LOCK so main-loop queue drains stay wait-free.
+      if (signals.length > 0) {
+        BaseStatusSignal.refreshAll(signals);
       }
-      for (int i = 0; i < timestampQueues.size(); i++) {
-        Queue<Double> tq = timestampQueues.get(i);
-        if (!tq.offer(timestampSeconds)) {
-          tq.poll();
-          tq.offer(timestampSeconds);
+
+      if (sampleScratch.length < suppliers.length) {
+        sampleScratch = new double[suppliers.length];
+      }
+      for (int i = 0; i < suppliers.length; i++) {
+        sampleScratch[i] = suppliers[i].getAsDouble();
+      }
+
+      ODOMETRY_LOCK.lock();
+      try {
+        int activeCount = Math.min(suppliers.length, signalQueues.size());
+        for (int i = 0; i < timestampQueues.size(); i++) {
+          Queue<Double> tq = timestampQueues.get(i);
+          if (!tq.offer(timestampSeconds)) {
+            tq.poll();
+            tq.offer(timestampSeconds);
+          }
         }
-      }
-      for (int i = 0; i < signalSuppliers.size(); i++) {
-        double val = signalSuppliers.get(i).getAsDouble();
-        Queue<Double> q = signalQueues.get(i);
-        if (!q.offer(val)) {
-          q.poll();
-          q.offer(val);
+        for (int i = 0; i < activeCount; i++) {
+          Queue<Double> q = signalQueues.get(i);
+          double val = sampleScratch[i];
+          if (!q.offer(val)) {
+            q.poll();
+            q.offer(val);
+          }
         }
+      } finally {
+        ODOMETRY_LOCK.unlock();
       }
     } finally {
-      ODOMETRY_LOCK.unlock();
+      canRefreshLock.unlock();
     }
   }
 
@@ -220,46 +247,62 @@ public final class PhoenixOdometryThread {
   }
 
   /**
-   * Ensures at least one 250 Hz sample is queued for the current control loop cycle when hardware
-   * signals are registered.
+   * Unregisters only the specified consumer's signals and queues so closing one module or gyro
+   * never resets or corrupts sibling consumers sharing the singleton thread.
    */
-  public void ensureSampleReady() {
-    ODOMETRY_LOCK.lock();
+  public void unregisterConsumer(
+      List<BaseStatusSignal> consumerSignals,
+      List<Queue<Double>> consumerSignalQueues,
+      Queue<Double> consumerTimestampQueue) {
+    canRefreshLock.lock();
     try {
-      if (!signalSuppliers.isEmpty() && timestampQueue.isEmpty()) {
-        sampleNow();
+      ODOMETRY_LOCK.lock();
+      try {
+        if (consumerTimestampQueue != null) {
+          timestampQueues.removeIf(q -> q == consumerTimestampQueue);
+        }
+        if (consumerSignalQueues != null) {
+          for (Queue<Double> targetQueue : consumerSignalQueues) {
+            for (int i = signalQueues.size() - 1; i >= 0; i--) {
+              if (signalQueues.get(i) == targetQueue) {
+                signalQueues.remove(i);
+                if (i < signalSuppliers.size()) {
+                  signalSuppliers.remove(i);
+                }
+              }
+            }
+          }
+        }
+        if (consumerSignals != null) {
+          for (BaseStatusSignal sig : consumerSignals) {
+            allSignals.removeIf(existing -> existing == sig);
+          }
+          cachedSignals = allSignals.toArray(new BaseStatusSignal[0]);
+        }
+      } finally {
+        ODOMETRY_LOCK.unlock();
       }
     } finally {
-      ODOMETRY_LOCK.unlock();
-    }
-  }
-
-  public double[] drainTimestamps() {
-    ODOMETRY_LOCK.lock();
-    try {
-      double[] out = new double[timestampQueue.size()];
-      int i = 0;
-      while (!timestampQueue.isEmpty()) {
-        out[i++] = timestampQueue.poll();
-      }
-      return out;
-    } finally {
-      ODOMETRY_LOCK.unlock();
+      canRefreshLock.unlock();
     }
   }
 
   public synchronized void reset() {
-    ODOMETRY_LOCK.lock();
+    canRefreshLock.lock();
     try {
-      allSignals.clear();
-      signalSuppliers.clear();
-      signalQueues.clear();
-      timestampQueues.clear();
-      timestampQueue.clear();
-      cachedSignals = new BaseStatusSignal[0];
-      odometryFrequencyHz = ODOMETRY_FREQUENCY_HZ;
+      ODOMETRY_LOCK.lock();
+      try {
+        allSignals.clear();
+        signalSuppliers.clear();
+        signalQueues.clear();
+        timestampQueues.clear();
+        cachedSignals = new BaseStatusSignal[0];
+        odometryFrequencyHz = ODOMETRY_FREQUENCY_HZ;
+      } finally {
+        ODOMETRY_LOCK.unlock();
+      }
     } finally {
-      ODOMETRY_LOCK.unlock();
+      canRefreshLock.unlock();
     }
   }
 }

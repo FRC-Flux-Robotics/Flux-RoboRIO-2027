@@ -64,5 +64,7 @@ Robots identify at boot via `/home/lvuser/robot-identity.txt` first (exact token
   - In `MechanismIOSim` (`ARM_COSINE`), keep `armRadPerPosRot = (spanRot > 2.0) ? (2.0 * Math.PI / armGearing) : (2.0 * Math.PI)` so geared mechanisms (`Hood` `0..12.5 rot`, `Tilter` `-17..0 rot`) travel at true speed.
   - In `Tier3CtreSimHardwareTest`, keep class-scoped `keepAliveTalon` on `"rio"` and call `DriverStationSim.setEnabled(true)` + `Unmanaged.feedEnable(100)` inside 250 Hz sim loops.
   - In JUnit tests and `StudentAutoRoutines`, use `withLoopTimeout(Command, double)` rather than `SimHooks.stepTiming` so `Timer.getFPGATimestamp()` is never frozen across tests.
+  - On any replayable time-comparison path (`Vision`, `Drive`), gate on `Logger.hasReplaySource() ? (Logger.getTimestamp() / 1_000_000.0) : Timer.getFPGATimestamp()` — raw `Timer.getFPGATimestamp()` reads live HAL wall time during `Mode.REPLAY` and causes freshness gates to drop 100% of logged frames.
+  - Never accept a `SKIPPED` JUnit result for `./gradlew verifyReplay`: AdvantageKit `LoggedRobot.startCompetition()` calls `System.exit(0)` at `WPILOGReader` EOF, so `DesktopReplayVerificationTest` must spawn a child JVM and assert `< 1 cm` timestamp-aligned pose parity in the parent JVM.
   - Commit SVG badges locally in [`docs/badges/`](docs/badges/tier1-hygiene.svg) using relative links in `README.md`.
 - **Agent Student Coaching Mode:** When scaffolding student tasks, provide clear Javadocs, `// TODO(student)` steps, plain-English physics/coordinate explanations, and a pre-written JUnit 5 test.

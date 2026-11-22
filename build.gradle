@@ -78,6 +78,7 @@ test {
     filter {
         excludeTestsMatching "frc.simharness.StudentAutoRenderTest.*"
         excludeTestsMatching "frc.simharness.DesktopWpilogTelemetryTest.*"
+        excludeTestsMatching "frc.simharness.DesktopReplayVerificationTest.*"
     }
     testLogging {
         events "passed", "skipped", "failed", "standardOut"
@@ -395,6 +396,26 @@ tasks.register('verifyWpilog', Test) {
     outputs.upToDateWhen { false }
 }
 wpi.java.configureTestTasks(tasks.named('verifyWpilog').get())
+
+// Task: verifyReplay — Executes full Robot Mode.REPLAY (WPILOGReader + setUseTiming(false)) in an isolated JVM
+tasks.register('verifyReplay', Test) {
+    group = 'flux'
+    description = 'Runs deterministic AdvantageKit Mode.REPLAY on a real recorded .wpilog and verifies < 1 cm pose fidelity.'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    filter {
+        includeTestsMatching "frc.simharness.DesktopReplayVerificationTest.*"
+    }
+    testLogging {
+        events "passed", "failed", "standardOut"
+        showStandardStreams = true
+        showExceptions = true
+        exceptionFormat = "short"
+    }
+    outputs.upToDateWhen { false }
+}
+wpi.java.configureTestTasks(tasks.named('verifyReplay').get())
 
 // Task: checkExercises — Grades the 4-level StudentExercises.java kit in < 3 seconds
 tasks.register('checkExercises', Test) {

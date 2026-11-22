@@ -45,6 +45,7 @@ public class Drive extends SubsystemBase {
   private final SwerveDrivePoseEstimator poseEstimator;
 
   private Rotation2d rawGyroRotation = Rotation2d.kZero;
+  private double unwrappedGyroYawRad = 0.0;
   private final SwerveModulePosition[] lastModulePositions =
       new SwerveModulePosition[] {
         new SwerveModulePosition(),
@@ -54,6 +55,7 @@ public class Drive extends SubsystemBase {
       };
   private final SwerveModulePosition[] scratchModulePositions = new SwerveModulePosition[4];
   private final SwerveModulePosition[] scratchModuleDeltas = new SwerveModulePosition[4];
+  private final SwerveModuleState[] scratchMeasuredStates = new SwerveModuleState[4];
 
   private double loopPeriodSec = 0.020;
   private double maxAccelScale = 1.0;
@@ -141,6 +143,9 @@ public class Drive extends SubsystemBase {
 
   public void setLoopPeriodSeconds(double loopPeriodSec) {
     this.loopPeriodSec = Math.max(0.002, loopPeriodSec);
+    for (Module module : modules) {
+      module.setLoopPeriodSeconds(this.loopPeriodSec);
+    }
   }
 
   public double getLoopPeriodSeconds() {
@@ -153,23 +158,15 @@ public class Drive extends SubsystemBase {
 
   @Override
   public void periodic() {
-    double[] sampleTimestamps;
-    PhoenixOdometryThread.ODOMETRY_LOCK.lock();
-    try {
-      PhoenixOdometryThread.getInstance().ensureSampleReady();
-      gyroIo.updateInputs(gyroInputs);
-      Logger.processInputs("Drive/Gyro", gyroInputs);
-      for (Module module : modules) {
-        module.periodic();
-      }
-
-      double[] moduleTimestamps = modules[0].getOdometryTimestamps();
-      double[] threadTimestamps = PhoenixOdometryThread.getInstance().drainTimestamps();
-      sampleTimestamps = (moduleTimestamps.length > 0) ? moduleTimestamps : threadTimestamps;
-    } finally {
-      PhoenixOdometryThread.ODOMETRY_LOCK.unlock();
+    // Adapters drain their own odometry queues inside updateInputs(); Drive depends only on logged
+    // AdvantageKit inputs so Mode.REPLAY stays 100% deterministic with zero hardware thread locks.
+    for (Module module : modules) {
+      module.periodic();
     }
+    gyroIo.updateInputs(gyroInputs);
+    Logger.processInputs("Drive/Gyro", gyroInputs);
 
+    double[] sampleTimestamps = modules[0].getOdometryTimestamps();
     int sampleCount = sampleTimestamps.length;
     for (int m = 0; m < 4; m++) {
       sampleCount = Math.min(sampleCount, modules[m].getOdometryPositions().length);
@@ -185,19 +182,28 @@ public class Drive extends SubsystemBase {
         lastModulePositions[m] = scratchModulePositions[m];
       }
 
+      Rotation2d prevGyro = rawGyroRotation;
       if (gyroInputs.connected && i < gyroInputs.odometryYawPositions.length) {
         rawGyroRotation = gyroInputs.odometryYawPositions[i];
+        unwrappedGyroYawRad +=
+            MathUtil.angleModulus(rawGyroRotation.minus(prevGyro).getRadians());
       } else {
         Twist2d twist = kinematics.toTwist2d(scratchModuleDeltas);
         rawGyroRotation = rawGyroRotation.plus(new Rotation2d(twist.dtheta));
+        unwrappedGyroYawRad += twist.dtheta;
       }
 
       poseEstimator.updateWithTime(sampleTimestamps[i], rawGyroRotation, scratchModulePositions);
       totalOdometrySamplesIntegrated++;
     }
 
+    for (int i = 0; i < 4; i++) {
+      scratchMeasuredStates[i] = modules[i].getState();
+    }
+
     Logger.recordOutput("Drive/Pose", getPose());
     Logger.recordOutput("Drive/ChassisSpeeds", getChassisSpeeds());
+    Logger.recordOutput("Drive/MeasuredStates", scratchMeasuredStates);
     Logger.recordOutput("Drive/TotalSupplyCurrentAmps", getTotalSupplyCurrentAmps());
     Logger.recordOutput("Drive/OdometrySamplesIntegrated", totalOdometrySamplesIntegrated);
   }
@@ -299,7 +305,9 @@ public class Drive extends SubsystemBase {
     if (lastVisionTimestampSec < 0.0) {
       return 999.0;
     }
-    return Math.max(0.0, Timer.getFPGATimestamp() - lastVisionTimestampSec);
+    double nowSec =
+        Logger.hasReplaySource() ? (Logger.getTimestamp() / 1_000_000.0) : Timer.getFPGATimestamp();
+    return Math.max(0.0, nowSec - lastVisionTimestampSec);
   }
 
   public double getLastVisionSightTimestampSec() {
@@ -430,12 +438,101 @@ public class Drive extends SubsystemBase {
         : 0.0;
   }
 
+  /** Applies open-loop drive characterization voltage with all 4 steer wheels pointed forward. */
+  public void runDriveCharacterization(double volts) {
+    for (Module m : modules) {
+      m.runDriveCharacterization(volts);
+    }
+    Logger.recordOutput("Drive/SysIdDriveVolts", volts);
+  }
+
+  /** Applies open-loop steer characterization voltage with drive motors held at 0 V. */
+  public void runSteerCharacterization(double volts) {
+    for (Module m : modules) {
+      m.runSteerCharacterization(volts);
+    }
+    Logger.recordOutput("Drive/SysIdSteerVolts", volts);
+  }
+
+  /** Applies open-loop drive voltage tangent to the chassis circle for rotation characterization. */
+  public void runRotationCharacterization(double volts) {
+    for (int i = 0; i < modules.length; i++) {
+      Rotation2d tangent =
+          config.corners()[i].moduleTranslation().getAngle().plus(Rotation2d.fromDegrees(90.0));
+      modules[i].runRotationCharacterization(tangent, volts);
+    }
+    Logger.recordOutput("Drive/SysIdRotationVolts", volts);
+  }
+
+  /** Returns all 4 drive wheel angular positions in radians for wheel-radius characterization. */
+  public double[] getWheelRadiusCharacterizationPositionsRad() {
+    double[] positions = new double[modules.length];
+    for (int i = 0; i < modules.length; i++) {
+      positions[i] = modules[i].getWheelPositionRad();
+    }
+    return positions;
+  }
+
+  /** Returns continuous unwrapped gyro yaw in radians (never wraps across +/-pi). */
+  public double getUnwrappedGyroYawRad() {
+    return unwrappedGyroYawRad;
+  }
+
+  public double getGyroYawVelocityRadPerSec() {
+    return gyroInputs.connected
+        ? gyroInputs.yawVelocityRadPerSec
+        : getChassisSpeeds().omegaRadiansPerSecond;
+  }
+
+  public boolean isGyroConnected() {
+    return gyroInputs.connected;
+  }
+
+  public double getAverageDrivePositionRad() {
+    double sum = 0.0;
+    for (Module m : modules) {
+      sum += m.getWheelPositionRad();
+    }
+    return sum / modules.length;
+  }
+
+  public double getAverageDriveVelocityRadPerSec() {
+    double sum = 0.0;
+    for (Module m : modules) {
+      sum += m.getWheelVelocityRadPerSec();
+    }
+    return sum / modules.length;
+  }
+
+  public double getAverageDriveAppliedVolts() {
+    double sum = 0.0;
+    for (Module m : modules) {
+      sum += m.getDriveAppliedVolts();
+    }
+    return sum / modules.length;
+  }
+
+  public double getAverageTurnAppliedVolts() {
+    double sum = 0.0;
+    for (Module m : modules) {
+      sum += m.getTurnAppliedVolts();
+    }
+    return sum / modules.length;
+  }
+
+  public double getAverageTurnVelocityRadPerSec() {
+    double sum = 0.0;
+    for (Module m : modules) {
+      sum += m.getTurnVelocityRadPerSec();
+    }
+    return sum / modules.length;
+  }
+
   /**
-   * Warms up lazy thread, kinematics, pose-estimator, module simulation, and AdvantageKit struct
-   * buffers during {@code robotInit()} so tick-1 {@link #periodic()} avoids cold-JIT stalls.
+   * Warms up lazy kinematics, pose-estimator, module simulation, and AdvantageKit struct buffers
+   * during {@code robotInit()} so tick-1 {@link #periodic()} avoids cold-JIT stalls.
    */
   public void warmup() {
-    PhoenixOdometryThread.getInstance();
     for (Module m : modules) {
       m.warmup();
     }
@@ -447,10 +544,11 @@ public class Drive extends SubsystemBase {
     SwerveDrivePoseEstimator warmupEstimator =
         new SwerveDrivePoseEstimator(
             kinematics, Rotation2d.kZero, lastModulePositions, Pose2d.kZero);
-    warmupEstimator.updateWithTime(0.020, Rotation2d.kZero, lastModulePositions);
-    warmupEstimator.addVisionMeasurement(Pose2d.kZero, 0.020, VecBuilder.fill(0.1, 0.1, 0.1));
+    warmupEstimator.updateWithTime(loopPeriodSec, Rotation2d.kZero, lastModulePositions);
+    warmupEstimator.addVisionMeasurement(Pose2d.kZero, loopPeriodSec, VecBuilder.fill(0.1, 0.1, 0.1));
     Logger.recordOutput("Drive/Pose", getPose());
     Logger.recordOutput("Drive/ChassisSpeeds", getChassisSpeeds());
     Logger.recordOutput("Drive/Setpoints", states);
+    Logger.recordOutput("Drive/MeasuredStates", states);
   }
 }

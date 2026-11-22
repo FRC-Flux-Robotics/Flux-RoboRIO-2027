@@ -2,3 +2,4 @@ version,configSha256,timestamp,author,notes
 v1,817cdbd6,2026-10-28T03:07:37.610530191Z,boris,Baseline 2026/2027 roboRIO configuration
 v2,aa7a7262,2026-11-21T13:20:00Z,boris,M1 CT handoff verified roboRIO configs (wheel-RPS gains, NONE gravity, 33.33-40 RPS range table)
 v3,535b8e2a,2026-11-21T23:20:00Z,boris,M1.29/M1.30 fleet-shared DEFAULT behavioral limits and joystick/rotation sensitivity defaults
+v4,98589687,2026-11-22T02:07:00Z,boris,M2.4 swerveCouplingRatio=4.5 azimuth-to-drive coupling parameter across fleet profiles

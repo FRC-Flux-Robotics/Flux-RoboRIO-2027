@@ -122,9 +122,22 @@ public class Vision extends SubsystemBase {
     return visionEnabledInput.get();
   }
 
+  private static double currentTimestampSec() {
+    return Logger.hasReplaySource()
+        ? (Logger.getTimestamp() / 1_000_000.0)
+        : Timer.getFPGATimestamp();
+  }
+
   @Override
   public void periodic() {
-    double nowSec = Timer.getFPGATimestamp();
+    periodicAtTimestamp(currentTimestampSec());
+  }
+
+  /**
+   * Executes one vision cycle at an explicit timestamp ({@code nowSec}), enabling deterministic
+   * {@code WPILOGReader} replay verification without mutating global HAL simulation hooks.
+   */
+  public void periodicAtTimestamp(double nowSec) {
     boolean autoEnabled = DriverStation.isAutonomous() && DriverStation.isEnabled();
     if (autoEnabled && !wasAutonomousEnabled) {
       autoEnableStartSec = nowSec;
@@ -363,7 +376,7 @@ public class Vision extends SubsystemBase {
   /** Feeds current gyro yaw, yaw rate, seeded state, and tilt angle for motion-gate filtering. */
   public void setRobotOrientation(
       Rotation2d yaw, double yawRateRadPerSec, boolean gyroSeeded, double maxTiltRad) {
-    recordMotionSample(yawRateRadPerSec, maxTiltRad, Timer.getFPGATimestamp());
+    recordMotionSample(yawRateRadPerSec, maxTiltRad, currentTimestampSec());
     for (VisionIO io : ios) {
       io.setRobotOrientation(yaw, yawRateRadPerSec, gyroSeeded);
     }

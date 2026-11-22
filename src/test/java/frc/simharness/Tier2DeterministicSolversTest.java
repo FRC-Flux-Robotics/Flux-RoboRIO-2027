@@ -26,6 +26,7 @@ import edu.wpi.first.wpilibj.simulation.XboxControllerSim;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.Commands;
+import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine;
 import frc.lib.commands.Blitz15MinCmd;
 import frc.lib.commands.DriveCommands;
 import frc.lib.commands.DriveToPose;
@@ -38,9 +39,11 @@ import frc.lib.commands.ShopStressSuiteCmd;
 import frc.lib.commands.ZeroPriorBootstrapCmd;
 import frc.lib.drive.Drive;
 import frc.lib.drive.GyroIO;
+import frc.lib.drive.GyroIOSim;
 import frc.lib.drive.Module;
 import frc.lib.drive.ModuleIO;
 import frc.lib.drive.ModuleIOSim;
+import frc.lib.drive.ModuleIOTalonFX;
 import frc.lib.drive.PhoenixOdometryThread;
 import frc.lib.drive.SwerveConfig;
 import frc.lib.drive.VirtualGeofence;
@@ -52,6 +55,9 @@ import frc.lib.mechanism.MechanismIOSim;
 import frc.lib.mechanism.PositionMechanism;
 import frc.lib.mechanism.VelocityMechanism;
 import frc.lib.safety.BatteryIO;
+import frc.lib.safety.BatteryIOBfgCan;
+import frc.lib.safety.BatteryIOSim;
+import frc.lib.safety.BatteryMonitor;
 import frc.lib.safety.FaultSupervisor;
 import frc.lib.util.FieldPositions;
 import frc.lib.util.FieldPositions.CoordinateSystem;
@@ -82,6 +88,7 @@ import frc.robot.autos.StudentAutoRoutines;
 import frc.robot.commands.ShotCalibrationCmd;
 import frc.robot.util.ShotCalculator;
 import frc.robot.util.ShotCalculator.ShotSolution;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -470,7 +477,6 @@ public class Tier2DeterministicSolversTest {
     SwerveConfig swerveConfig = SwerveConfig.fromFluxFig(fig, "FUEL");
     FaultSupervisor faultSupervisor = new FaultSupervisor(3);
 
-    PhoenixOdometryThread.getInstance().drainTimestamps();
     ModuleIO[] moduleIOs =
         new ModuleIO[] {
           new ModuleIOSim(swerveConfig),
@@ -576,44 +582,63 @@ public class Tier2DeterministicSolversTest {
     Drive drive = fuelContainer.getDrive();
     Vision vision = fuelContainer.getVision();
 
-    BatteryIO batIo = new BatteryIO(fig, "rio");
-    assertEquals("UNKNOWN_BATTERY", batIo.getResolvedBatteryName());
-    assertFalse(batIo.isHealthy());
+    double[] fakeClockSec = {10.0};
+    BatteryIOBfgCan bfgCan = new BatteryIOBfgCan("rio", 0, () -> fakeClockSec[0]);
+    BatteryMonitor batMonitor = new BatteryMonitor(bfgCan, fig);
+    batMonitor.periodic();
+    assertEquals("UNKNOWN_BATTERY", batMonitor.getResolvedBatteryName());
+    assertFalse(batMonitor.isHealthy());
 
-    int nick1ArbId = BatteryIO.buildBfgArbitrationId(BatteryIO.API_ID_NICKNAME_1, 0);
+    int nick1ArbId = BatteryIOBfgCan.buildBfgArbitrationId(BatteryIO.API_ID_NICKNAME_1, 0);
     assertEquals(0x0A0B0F00, nick1ArbId);
     assertTrue(
-        batIo.processCanFrame(nick1ArbId, BatteryIO.encodeNickname1Frame("2026-B02"), 8));
-    assertEquals("2026-B02", batIo.getResolvedBatteryName());
+        bfgCan.processCanFrame(nick1ArbId, BatteryIOBfgCan.encodeNickname1Frame("2026-B02"), 8));
+    batMonitor.periodic();
+    assertEquals("2026-B02", batMonitor.getResolvedBatteryName());
 
-    int powerArbId = BatteryIO.buildBfgArbitrationId(BatteryIO.API_ID_POWER, 0);
+    int powerArbId = BatteryIOBfgCan.buildBfgArbitrationId(BatteryIO.API_ID_POWER, 0);
     assertTrue(
-        batIo.processCanFrame(powerArbId, BatteryIO.encodePowerFrame(18.5, 12.640, 420.0), 8));
-    double bfgDecodeErrMv = Math.abs(batIo.getVoltageVolts() - 12.640) * 1000.0;
-    assertEquals(12.640, batIo.getVoltageVolts(), 1e-4);
-    assertEquals(18.5, batIo.getCurrentAmps(), 1e-3);
+        bfgCan.processCanFrame(
+            powerArbId, BatteryIOBfgCan.encodePowerFrame(18.5, 12.640, 420.0), 8));
+    batMonitor.periodic();
+    double bfgDecodeErrMv = Math.abs(batMonitor.getVoltageVolts() - 12.640) * 1000.0;
+    assertEquals(12.640, batMonitor.getVoltageVolts(), 1e-4);
+    assertEquals(18.5, batMonitor.getCurrentAmps(), 1e-3);
 
-    int socArbId = BatteryIO.buildBfgArbitrationId(BatteryIO.API_ID_STATE_OF_CHARGE, 0);
+    int socArbId = BatteryIOBfgCan.buildBfgArbitrationId(BatteryIO.API_ID_STATE_OF_CHARGE, 0);
     assertTrue(
-        batIo.processCanFrame(
-            socArbId, BatteryIO.encodeStateOfChargeFrame(17370.0, 18000.0, 2, 224.0), 8));
-    assertEquals(96.5, batIo.getStateOfChargePct(), 1e-3);
-    assertEquals(15.8, batIo.getInternalResistanceMilliOhms(), 1e-3);
-    assertTrue(batIo.isHealthy());
+        bfgCan.processCanFrame(
+            socArbId, BatteryIOBfgCan.encodeStateOfChargeFrame(17370.0, 18000.0, 2, 224.0), 8));
+    batMonitor.periodic();
+    assertEquals(96.5, batMonitor.getStateOfChargePct(), 1e-3);
+    assertEquals(15.8, batMonitor.getInternalResistanceMilliOhms(), 1e-3);
+    assertTrue(batMonitor.isHealthy());
 
-    assertTrue(
-        batIo.processCanFrame(powerArbId, BatteryIO.encodePowerFrame(15.0, 12.500, 425.0), 8));
-    assertTrue(
-        batIo.processCanFrame(powerArbId, BatteryIO.encodePowerFrame(115.0, 10.850, 440.0), 8));
-    assertEquals(16.5, batIo.getInternalResistanceMilliOhms(), 0.2);
+    // Three confirming >=25A load steps update median-filtered R_int to ~16.5 mOhm.
+    for (int step = 0; step < 3; step++) {
+      fakeClockSec[0] += 0.10;
+      assertTrue(
+          bfgCan.processCanFrame(
+              powerArbId, BatteryIOBfgCan.encodePowerFrame(15.0, 12.500, 425.0), 8));
+      batMonitor.periodic();
+      fakeClockSec[0] += 0.10;
+      assertTrue(
+          bfgCan.processCanFrame(
+              powerArbId, BatteryIOBfgCan.encodePowerFrame(115.0, 10.850, 440.0), 8));
+      batMonitor.periodic();
+    }
+    assertEquals(16.5, batMonitor.getInternalResistanceMilliOhms(), 0.25);
 
-    batIo.simulateCanReading("FLUX-BAT-2026-B01", 12.65, 98.0, 96.0, 15.5);
-    assertEquals("2026-B01", batIo.getResolvedBatteryName());
-    assertTrue(batIo.isHealthy());
+    BatteryIOSim simBatIo = new BatteryIOSim("rio", null);
+    BatteryMonitor simBatMonitor = new BatteryMonitor(simBatIo, fig);
+    simBatIo.simulateReading("FLUX-BAT-2026-B01", 12.65, 98.0, 96.0, 15.5);
+    simBatMonitor.periodic();
+    assertEquals("2026-B01", simBatMonitor.getResolvedBatteryName());
+    assertTrue(simBatMonitor.isHealthy());
     assertThrows(
         IllegalArgumentException.class,
-        () -> new BatteryIO(fig, "Drivetrain"),
-        "BatteryIO must reject high-rate CAN FD buses");
+        () -> new BatteryIOBfgCan("Drivetrain"),
+        "BatteryIOBfgCan must reject high-rate CAN FD buses");
     PrecisionReporter.recordLowerIsBetter(
         2,
         "tier2_bfg_can_decode_err_mv",
@@ -2828,29 +2853,32 @@ public class Tier2DeterministicSolversTest {
   public void testRealRobotWeakBatteryRintStillDerates() {
     Path configDir = Paths.get("src/main/deploy/configs");
     RobotContainer container = new RobotContainer(RobotIdentity.FUEL, configDir, true);
-    BatteryIO batIo = container.getBatteryIo();
+    BatteryMonitor batMonitor = container.getBatteryMonitor();
+    BatteryIOSim batSim = (BatteryIOSim) container.getBatteryIo();
 
     // Absent gauge: falls back to nominal batteries.csv R_int (~15.875 mOhm)
-    assertFalse(batIo.isConnected());
+    batMonitor.periodic();
+    assertFalse(batMonitor.isConnected());
     double absentRint =
         RobotContainer.selectEffectiveRintMilliOhms(
-            batIo.isConnected(),
-            batIo.getInternalResistanceMilliOhms(),
-            batIo.getNominalRintMilliOhms());
+            batMonitor.isConnected(),
+            batMonitor.getInternalResistanceMilliOhms(),
+            batMonitor.getNominalRintMilliOhms());
     assertTrue(
         absentRint >= 15.0 && absentRint <= 17.0,
         "Absent BFG must use nominal batteries.csv R_int (got " + absentRint + " mOhm)");
 
     // Connected weak battery (> 22 mOhm, < 75% SoC -> isHealthy() == false): MUST still derate!
-    batIo.simulateCanReading("FLUX-BAT-2026-B01", 12.1, 55.0, 70.0, 30.0);
-    assertTrue(batIo.isConnected());
-    assertFalse(batIo.isHealthy(), "Weak battery (30 mOhm, 55% SoC) must report unhealthy");
+    batSim.simulateReading("FLUX-BAT-2026-B01", 12.1, 55.0, 70.0, 30.0);
+    batMonitor.periodic();
+    assertTrue(batMonitor.isConnected());
+    assertFalse(batMonitor.isHealthy(), "Weak battery (30 mOhm, 55% SoC) must report unhealthy");
 
     double weakRint =
         RobotContainer.selectEffectiveRintMilliOhms(
-            batIo.isConnected(),
-            batIo.getInternalResistanceMilliOhms(),
-            batIo.getNominalRintMilliOhms());
+            batMonitor.isConnected(),
+            batMonitor.getInternalResistanceMilliOhms(),
+            batMonitor.getNominalRintMilliOhms());
     assertEquals(
         30.0,
         weakRint,
@@ -3628,6 +3656,219 @@ public class Tier2DeterministicSolversTest {
       ntInst.close();
       deleteTree(tmpDir);
     }
+  }
+
+  @Test
+  public void testM22DriveReplayInputsOnlyAndZeroPhoenixThreadCoupling() throws Exception {
+    String driveSrc =
+        Files.readString(
+            Paths.get("src/main/java/frc/lib/drive/Drive.java"), StandardCharsets.UTF_8);
+    assertFalse(
+        driveSrc.contains("PhoenixOdometryThread"),
+        "RC-6: Drive.java must have zero references to PhoenixOdometryThread");
+
+    String batterySrc =
+        Files.readString(
+            Paths.get("src/main/java/frc/lib/safety/BatteryIO.java"), StandardCharsets.UTF_8);
+    assertTrue(
+        batterySrc.contains("public interface BatteryIO"),
+        "RC-5: BatteryIO must be a pure port interface");
+
+    String elasticComp =
+        Files.readString(Paths.get("elastic-competition.json"), StandardCharsets.UTF_8);
+    assertTrue(
+        elasticComp.contains("/AdvantageKit/RealOutputs/Drive/ActiveStatorLimitAmps")
+            && elasticComp.contains("/AdvantageKit/RealOutputs/Superstructure/ReadyToFire")
+            && !elasticComp.contains("/AdvantageKit/RealOutputs/FaultSupervisor/ActiveDriveStatorLimitAmps")
+            && !elasticComp.contains("/AdvantageKit/RealOutputs/Superstructure/AtTarget"),
+        "M2.3: elastic-competition.json must bind to live Drive/ActiveStatorLimitAmps and Superstructure/ReadyToFire");
+
+    // Verify RobotContainer.Mode.REPLAY constructs pure no-op IOs without crashing or spawning sim.
+    RobotContainer replayContainer =
+        new RobotContainer(
+            RobotIdentity.CHASSIS_3,
+            Paths.get("src/main/deploy/configs"),
+            null,
+            frc.robot.Robot.Mode.REPLAY);
+    assertEquals(frc.robot.Robot.Mode.REPLAY, replayContainer.getRobotMode());
+    replayContainer.getDrive().periodic();
+    replayContainer.periodicUpdate();
+    replayContainer.close();
+  }
+
+  @Test
+  public void testM24WheelRadiusCharacterizationUnwrappedGyroAndSysIdCommands() {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    SwerveConfig cfg = SwerveConfig.fromFluxFig(fig, "CHASSIS_3");
+    assertEquals(4.5, cfg.couplingRatio(), 1e-6, "CHASSIS_3 swerveCouplingRatio must default/load 4.5");
+
+    VirtualBatterySim batSim = new VirtualBatterySim(12.6, 0.015);
+    ModuleIOSim[] simMods = new ModuleIOSim[4];
+    for (int i = 0; i < 4; i++) {
+      simMods[i] = new ModuleIOSim(cfg, batSim::terminalVoltageV);
+    }
+    GyroIOSim gyroSim = new GyroIOSim(cfg, simMods, batSim::terminalVoltageV);
+    Drive drive = new Drive(cfg, gyroSim, simMods);
+    drive.setPose(Pose2d.kZero);
+
+    // Run wheelRadiusCharacterization across > 2 full revolutions (past +/-pi wrap boundaries).
+    Command spinCmd = DriveCommands.wheelRadiusCharacterization(drive);
+    spinCmd.initialize();
+    for (int i = 0; i < 750; i++) {
+      spinCmd.execute();
+      drive.periodic();
+      batSim.update(drive.getTotalSupplyCurrentAmps(), 0.0);
+    }
+    spinCmd.end(false);
+
+    double unwrappedYaw = Math.abs(drive.getUnwrappedGyroYawRad());
+    assertTrue(
+        unwrappedYaw > 2.0 * Math.PI,
+        "Unwrapped gyro yaw must exceed 1 full turn (> 2*pi rad) without wrapping (got "
+            + unwrappedYaw
+            + ")");
+    double[] wheelPos = drive.getWheelRadiusCharacterizationPositionsRad();
+    double meanWheelRad = 0.0;
+    for (double p : wheelPos) {
+      meanWheelRad += Math.abs(p);
+    }
+    meanWheelRad /= wheelPos.length;
+    double baseRadius = cfg.corners()[0].moduleTranslation().getNorm();
+    double recoveredRadius = (unwrappedYaw * baseRadius) / meanWheelRad;
+    assertEquals(
+        cfg.wheelRadiusMeters(),
+        recoveredRadius,
+        0.0025,
+        "Unwrapped gyro vs wheel encoder radius must recover configured wheelRadiusMeters within 2.5 mm");
+
+    // Verify SysId translation, steer, and rotation commands drive the expected open-loop outputs.
+    Command transFwd =
+        DriveCommands.sysIdTranslationDynamic(drive, SysIdRoutine.Direction.kForward);
+    transFwd.initialize();
+    for (int i = 0; i < 15; i++) {
+      transFwd.execute();
+      drive.periodic();
+    }
+    assertTrue(
+        drive.getAverageDriveAppliedVolts() > 1.0 && drive.getAverageDriveVelocityRadPerSec() > 1.0,
+        "SysId translation dynamic forward must drive positive voltage and wheel velocity");
+    transFwd.end(false);
+
+    Command steerFwd = DriveCommands.sysIdSteerDynamic(drive, SysIdRoutine.Direction.kForward);
+    steerFwd.initialize();
+    for (int i = 0; i < 10; i++) {
+      steerFwd.execute();
+      drive.periodic();
+    }
+    assertTrue(
+        drive.getAverageTurnAppliedVolts() > 0.5,
+        "SysId steer dynamic forward must apply positive steer voltage");
+    steerFwd.end(false);
+
+    Command rotFwd = DriveCommands.sysIdRotationDynamic(drive, SysIdRoutine.Direction.kForward);
+    rotFwd.initialize();
+    for (int i = 0; i < 20; i++) {
+      rotFwd.execute();
+      drive.periodic();
+    }
+    assertTrue(
+        Math.abs(drive.getGyroYawVelocityRadPerSec()) > 0.5,
+        "SysId rotation dynamic forward must spin the chassis and measure gyro yaw rate");
+    rotFwd.end(false);
+  }
+
+  @Test
+  public void testM24ModuleIoSimStatorClampRailVoltageCouplingAndDtParameterization() {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    SwerveConfig cfg = SwerveConfig.fromFluxFig(fig, "CHASSIS_3");
+    double[] railVolts = {12.4};
+    ModuleIOSim sim12V = new ModuleIOSim(cfg, () -> railVolts[0]);
+    sim12V.setLoopPeriodSeconds(0.010);
+    assertEquals(0.010, sim12V.getLoopPeriodSeconds(), 1e-9);
+
+    // At rest (backEmf=0), commanding 12 V must be clamped to stator limit (60 A * R_ohms) in physics.
+    ModuleIO.ModuleIOInputs in12 = new ModuleIO.ModuleIOInputs();
+    sim12V.setDriveOpenLoop(12.0);
+    sim12V.updateInputs(in12);
+    assertTrue(
+        in12.driveStatorCurrentAmps <= 60.05 && in12.driveAppliedVolts < 4.0,
+        "Stator current clamp must physically bound stall voltage before stepping DCMotorSim (V="
+            + in12.driveAppliedVolts
+            + ", I="
+            + in12.driveStatorCurrentAmps
+            + ")");
+    assertTrue(
+        in12.odometryTimestamps.length >= 2 && in12.odometryTimestamps.length <= 3,
+        "10 ms loop dt must generate ~2-3 substeps at 4 ms target (got "
+            + in12.odometryTimestamps.length
+            + ")");
+
+    // Lowering rail voltage to 8.0 V must reduce steady-state top speed compared to 12.4 V rail.
+    ModuleIOSim simSag = new ModuleIOSim(cfg, () -> 8.0);
+    ModuleIOSim simFull = new ModuleIOSim(cfg, () -> 12.4);
+    ModuleIO.ModuleIOInputs inSag = new ModuleIO.ModuleIOInputs();
+    ModuleIO.ModuleIOInputs inFull = new ModuleIO.ModuleIOInputs();
+    for (int i = 0; i < 60; i++) {
+      simSag.setDriveOpenLoop(12.0);
+      simFull.setDriveOpenLoop(12.0);
+      simSag.updateInputs(inSag);
+      simFull.updateInputs(inFull);
+    }
+    assertTrue(
+        inSag.driveVelocityRadPerSec < inFull.driveVelocityRadPerSec * 0.80,
+        "Sagging 8.0 V battery rail must physically slow ModuleIOSim top speed (sag="
+            + inSag.driveVelocityRadPerSec
+            + ", full="
+            + inFull.driveVelocityRadPerSec
+            + ")");
+
+    // Verify real steer turnKp/turnKd converges to 90 deg smoothly.
+    simFull.setTurnPosition(Rotation2d.fromDegrees(90.0));
+    for (int i = 0; i < 40; i++) {
+      simFull.updateInputs(inFull);
+    }
+    assertEquals(
+        90.0,
+        inFull.turnPosition.getDegrees(),
+        3.0,
+        "ModuleIOSim real turnKp/turnKd must converge steer to 90 deg");
+  }
+
+  @Test
+  public void testM24BatteryIoBfgCanDisconnectTimeoutAndMedianRintGlitchRejection() {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    double[] clockSec = {5.0};
+    BatteryIOBfgCan bfg = new BatteryIOBfgCan("rio", 0, () -> clockSec[0]);
+    BatteryMonitor monitor = new BatteryMonitor(bfg, fig);
+    int powerArbId = BatteryIOBfgCan.buildBfgArbitrationId(BatteryIO.API_ID_POWER, 0);
+    int nickArbId = BatteryIOBfgCan.buildBfgArbitrationId(BatteryIO.API_ID_NICKNAME_1, 0);
+
+    bfg.processCanFrame(nickArbId, BatteryIOBfgCan.encodeNickname1Frame("2026-B02"), 8);
+    bfg.processCanFrame(powerArbId, BatteryIOBfgCan.encodePowerFrame(10.0, 12.60, 100.0), 8);
+    monitor.periodic();
+    assertTrue(monitor.isConnected());
+    assertEquals(15.8, monitor.getInternalResistanceMilliOhms(), 1e-3);
+
+    // Inject ONE noisy 50 mOhm glitch step: median-of-3 window MUST reject single-sample latch!
+    clockSec[0] += 0.1;
+    bfg.processCanFrame(powerArbId, BatteryIOBfgCan.encodePowerFrame(60.0, 10.10, 105.0), 8);
+    monitor.periodic();
+    assertEquals(
+        15.8,
+        monitor.getInternalResistanceMilliOhms(),
+        1e-3,
+        "Single noisy CAN voltage glitch must not overwrite filtered R_int");
+
+    // Advance clock past CAN_DISCONNECT_TIMEOUT_SEC (2.0 s) with no frames: connected must clear!
+    clockSec[0] += 2.5;
+    monitor.periodic();
+    assertFalse(
+        monitor.isConnected(),
+        "BatteryIOBfgCan must clear inputs.connected after CAN timeout > 2.0 s");
+
+    // Verify coupling compensation static helper directly.
+    double comp = ModuleIOTalonFX.compensateDriveRotationsForAzimuth(1.7037037, 1.0, 4.5, 6.3947368421);
+    assertEquals(1.0, comp, 1e-4, "Azimuth coupling compensation must remove 4.5/6.3947 phantom wheel rev");
   }
 
   private static void deleteTree(Path root) {

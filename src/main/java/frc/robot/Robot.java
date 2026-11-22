@@ -23,16 +23,27 @@ import org.littletonrobotics.junction.LoggedPowerDistribution;
 import org.littletonrobotics.junction.LoggedRobot;
 import org.littletonrobotics.junction.Logger;
 import org.littletonrobotics.junction.networktables.NT4Publisher;
+import org.littletonrobotics.junction.wpilog.WPILOGReader;
 import org.littletonrobotics.junction.wpilog.WPILOGWriter;
 
 /**
- * LoggedRobot lifecycle for {@code Flux-RoboRIO-2027} ({@code FUEL} / {@code CORAL}): 50 Hz
- * control loop via FluxFig, {@code ConfigSHA256} metadata recorded before {@link Logger#start()},
- * {@code 6.0 V} roboRIO brownout floor, {@link LoggedPowerDistribution} logging, atomic {@code
+ * LoggedRobot lifecycle for {@code Flux-RoboRIO-2027} ({@code FUEL} / {@code CORAL} / {@code
+ * CHASSIS_3}): AdvantageKit {@link Mode#REAL}, {@link Mode#SIM}, and deterministic {@link
+ * Mode#REPLAY} ({@link WPILOGReader} + {@code setUseTiming(false)}), 50 Hz control loop via
+ * FluxFig, {@code ConfigSHA256} metadata recorded before {@link Logger#start()}, {@code 6.0 V}
+ * roboRIO brownout floor, {@link LoggedPowerDistribution} logging, atomic {@code
  * /tmp/flux-robot-state} lockout heartbeat for {@code FluxTray}, batched CAN signal refresh,
  * main-thread RT priority {@code 1}, and isolated {@link #testInit()}.
  */
 public class Robot extends LoggedRobot {
+
+  /** AdvantageKit robot execution mode. */
+  public enum Mode {
+    REAL,
+    SIM,
+    REPLAY
+  }
+
   /** Safe SCHED_FIFO priority (1 rather than 99) preventing Linux RT worker starvation (-1003). */
   public static final int MAIN_THREAD_RT_PRIORITY = 1;
 
@@ -48,6 +59,9 @@ public class Robot extends LoggedRobot {
   private static boolean loggerStarted = false;
 
   private final Path robotStateFile;
+  private final Mode mode;
+  private final Path replayLogPath;
+  private final Path replayOutputPath;
   private RobotIdentity identity;
   private RobotContainer robotContainer;
   private Command autonomousCommand;
@@ -65,8 +79,53 @@ public class Robot extends LoggedRobot {
 
   /** Deterministic constructor allowing an isolated state-file path in unit/sim tests. */
   public Robot(Path robotStateFile) {
+    this(robotStateFile, resolveReplayLogPathFromProperties(), resolveReplayOutPathFromProperties());
+  }
+
+  /** Deterministic constructor supporting explicit AdvantageKit {@link Mode#REPLAY} log paths. */
+  public Robot(Path robotStateFile, Path replayLogPath, Path replayOutputPath) {
     super(resolveBootLoopPeriodSeconds());
     this.robotStateFile = (robotStateFile != null) ? robotStateFile : DEFAULT_ROBOT_STATE_FILE;
+    this.replayLogPath = RobotBase.isReal() ? null : replayLogPath;
+    this.replayOutputPath = RobotBase.isReal() ? null : replayOutputPath;
+    this.mode = resolveMode(RobotBase.isReal(), this.replayLogPath);
+  }
+
+  public static Mode resolveMode(boolean isRealRobot, Path replayLogPath) {
+    if (isRealRobot) {
+      return Mode.REAL;
+    }
+    return (replayLogPath != null) ? Mode.REPLAY : Mode.SIM;
+  }
+
+  private static Path resolveReplayLogPathFromProperties() {
+    String prop = System.getProperty("flux.replayLog");
+    if (prop == null || prop.isBlank()) {
+      prop = System.getenv("FLUX_REPLAY_LOG");
+    }
+    return (prop != null && !prop.isBlank()) ? Path.of(prop.trim()) : null;
+  }
+
+  private static Path resolveReplayOutPathFromProperties() {
+    String prop = System.getProperty("flux.replayOutLog");
+    if (prop == null || prop.isBlank()) {
+      prop = System.getenv("FLUX_REPLAY_OUT_LOG");
+    }
+    return (prop != null && !prop.isBlank()) ? Path.of(prop.trim()) : null;
+  }
+
+  private static boolean shouldWriteSimWpilog() {
+    String prop = System.getProperty("flux.simWriteWpilog", "true");
+    return !"false".equalsIgnoreCase(prop.trim());
+  }
+
+  private static Path deriveDefaultReplayOutputPath(Path replayInput) {
+    String name = replayInput.getFileName().toString();
+    int dot = name.lastIndexOf('.');
+    String stem = (dot > 0) ? name.substring(0, dot) : name;
+    String ext = (dot > 0) ? name.substring(dot) : ".wpilog";
+    Path parent = replayInput.getParent();
+    return (parent != null) ? parent.resolve(stem + "_sim" + ext) : Path.of(stem + "_sim" + ext);
   }
 
   private static double resolveBootLoopPeriodSeconds() {
@@ -83,11 +142,13 @@ public class Robot extends LoggedRobot {
 
   @Override
   public void robotInit() {
-    // Keep CTRE .hoot auto-logging OFF (WPILOG-only for M1 CT handoff to avoid flash/USB bloat).
+    // Keep CTRE .hoot auto-logging OFF (WPILOG-only to avoid flash/USB bloat).
     SignalLogger.enableAutoLogging(false);
-    RobotController.setBrownoutVoltage(ROBORIO_BROWNOUT_VOLTAGE_V);
-    LiveWindow.disableAllTelemetry();
-    updateJoystickWarningSilence();
+    if (mode != Mode.REPLAY) {
+      RobotController.setBrownoutVoltage(ROBORIO_BROWNOUT_VOLTAGE_V);
+      LiveWindow.disableAllTelemetry();
+      updateJoystickWarningSilence();
+    }
 
     logDir = LogFileManager.getLogPath();
     bootTimestampIso = Instant.now().toString();
@@ -102,6 +163,7 @@ public class Robot extends LoggedRobot {
     String bootConfigPreset = RobotContainer.resolveBootConfigPreset(bootDirective, bootConfig);
 
     // Record all immutable boot metadata BEFORE Logger.start() so WPILOG headers capture it.
+    Logger.recordMetadata("RobotMode", mode.name());
     Logger.recordMetadata("LogDirectory", logDir);
     Logger.recordMetadata("GitSHA", deployedGitSha);
     Logger.recordMetadata("RobotIdentity", identity.name());
@@ -113,33 +175,53 @@ public class Robot extends LoggedRobot {
     Logger.recordMetadata("ConfigPreset", bootConfigPreset);
 
     if (!loggerStarted) {
-      if (!Logger.hasReplaySource()) {
-        Logger.addDataReceiver(new WPILOGWriter(logDir));
-        Logger.addDataReceiver(new NT4Publisher());
+      switch (mode) {
+        case REAL -> {
+          Logger.addDataReceiver(new WPILOGWriter(logDir));
+          Logger.addDataReceiver(new NT4Publisher());
+        }
+        case SIM -> {
+          Logger.addDataReceiver(new NT4Publisher());
+          if (shouldWriteSimWpilog()) {
+            Logger.addDataReceiver(new WPILOGWriter(logDir));
+          }
+        }
+        case REPLAY -> {
+          setUseTiming(false);
+          Logger.setReplaySource(new WPILOGReader(replayLogPath.toString()));
+          if (!"false".equalsIgnoreCase(System.getProperty("flux.replayWriteOutput", "true"))) {
+            Path outLog =
+                (replayOutputPath != null)
+                    ? replayOutputPath
+                    : deriveDefaultReplayOutputPath(replayLogPath);
+            Logger.addDataReceiver(new WPILOGWriter(outLog.toString()));
+          }
+        }
       }
       Logger.start();
       loggerStarted = true;
     }
 
-    LoggedPowerDistribution.getInstance();
+    if (mode != Mode.REPLAY) {
+      LoggedPowerDistribution.getInstance();
+    }
 
-    robotContainer = new RobotContainer(identity, configDir, bootConfig, !RobotBase.isReal());
+    robotContainer = new RobotContainer(identity, configDir, bootConfig, mode);
     robotContainer.getDrive().setLoopPeriodSeconds(getPeriod());
 
     Logger.recordOutput("Phoenix/CanConfigFailures", PhoenixUtil.getFailedConfigCallCount());
     Logger.recordOutput("Phoenix/CanConfigSkipped", PhoenixUtil.getSkippedConfigCallCount());
 
-    if (RobotBase.isReal()) {
+    if (mode == Mode.REAL) {
       Threads.setCurrentThreadPriority(true, MAIN_THREAD_RT_PRIORITY);
       Logger.recordOutput("Robot/MainThreadPriority", Threads.getCurrentThreadPriority());
     }
 
-    if (!Logger.hasReplaySource()) {
+    if (mode != Mode.REPLAY && !Logger.hasReplaySource()) {
       robotContainer.warmupBeforeCompetitionLoop();
+      refreshRunMetaJson();
+      writeRobotStateHeartbeat(true);
     }
-
-    refreshRunMetaJson();
-    writeRobotStateHeartbeat(true);
   }
 
   private void updateJoystickWarningSilence() {
@@ -185,7 +267,7 @@ public class Robot extends LoggedRobot {
   }
 
   private void refreshRunMetaJson() {
-    if (logDir == null || identity == null || robotContainer == null) {
+    if (mode == Mode.REPLAY || logDir == null || identity == null || robotContainer == null) {
       return;
     }
     try {
@@ -194,7 +276,7 @@ public class Robot extends LoggedRobot {
           identity.name(),
           robotContainer.getFluxFig().getActiveProfile(),
           robotContainer.getBootConfigSha256(),
-          robotContainer.getBatteryIo().getResolvedBatteryName(),
+          robotContainer.getBatteryMonitor().getResolvedBatteryName(),
           robotContainer.getFluxFig().getInt("loopPeriodMs"),
           deployedGitSha,
           bootTimestampIso,
@@ -208,9 +290,11 @@ public class Robot extends LoggedRobot {
   public void robotPeriodic() {
     double loopStartSec = Timer.getFPGATimestamp();
     LoggedTracer.reset();
-    updateJoystickWarningSilence();
-    writeRobotStateHeartbeat(false);
-    if (!Logger.hasReplaySource()) {
+    if (mode != Mode.REPLAY) {
+      updateJoystickWarningSilence();
+      writeRobotStateHeartbeat(false);
+    }
+    if (mode != Mode.REPLAY && !Logger.hasReplaySource()) {
       PhoenixSignals.refreshAll();
     }
     LoggedTracer.trace("PhoenixSignals");
@@ -226,7 +310,9 @@ public class Robot extends LoggedRobot {
 
   @Override
   public void disabledInit() {
-    writeRobotStateHeartbeat(true);
+    if (mode != Mode.REPLAY) {
+      writeRobotStateHeartbeat(true);
+    }
     if (robotContainer != null) {
       robotContainer.resetSuperstructureToIdle();
       robotContainer.disabledPeriodic();
@@ -243,7 +329,9 @@ public class Robot extends LoggedRobot {
 
   @Override
   public void autonomousInit() {
-    writeRobotStateHeartbeat(true);
+    if (mode != Mode.REPLAY) {
+      writeRobotStateHeartbeat(true);
+    }
     if (autonomousCommand != null) {
       autonomousCommand.cancel();
     }
@@ -260,7 +348,9 @@ public class Robot extends LoggedRobot {
 
   @Override
   public void teleopInit() {
-    writeRobotStateHeartbeat(true);
+    if (mode != Mode.REPLAY) {
+      writeRobotStateHeartbeat(true);
+    }
     if (autonomousCommand != null) {
       autonomousCommand.cancel();
       autonomousCommand = null;
@@ -283,7 +373,9 @@ public class Robot extends LoggedRobot {
     if (robotContainer != null) {
       robotContainer.resetSuperstructureToIdle();
     }
-    writeRobotStateHeartbeat(true);
+    if (mode != Mode.REPLAY) {
+      writeRobotStateHeartbeat(true);
+    }
   }
 
   @Override
@@ -297,11 +389,17 @@ public class Robot extends LoggedRobot {
     if (robotContainer != null) {
       robotContainer.close();
     }
-    try {
-      Files.deleteIfExists(robotStateFile);
-    } catch (IOException ignored) {
+    if (mode != Mode.REPLAY) {
+      try {
+        Files.deleteIfExists(robotStateFile);
+      } catch (IOException ignored) {
+      }
     }
     super.close();
+  }
+
+  public Mode getMode() {
+    return mode;
   }
 
   public RobotContainer getRobotContainer() {

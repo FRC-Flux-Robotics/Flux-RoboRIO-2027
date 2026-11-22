@@ -17,6 +17,7 @@ import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
+import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine;
 import frc.lib.commands.Blitz15MinCmd;
 import frc.lib.commands.DriveCommands;
 import frc.lib.commands.DriveToPose;
@@ -30,6 +31,7 @@ import frc.lib.commands.ZeroPriorBootstrapCmd;
 import frc.lib.drive.Drive;
 import frc.lib.drive.GyroIO;
 import frc.lib.drive.GyroIOPigeon2;
+import frc.lib.drive.GyroIOSim;
 import frc.lib.drive.ModuleIO;
 import frc.lib.drive.ModuleIOSim;
 import frc.lib.drive.ModuleIOTalonFX;
@@ -45,6 +47,9 @@ import frc.lib.mechanism.MechanismIOTalonFX;
 import frc.lib.mechanism.PositionMechanism;
 import frc.lib.mechanism.VelocityMechanism;
 import frc.lib.safety.BatteryIO;
+import frc.lib.safety.BatteryIOBfgCan;
+import frc.lib.safety.BatteryIOSim;
+import frc.lib.safety.BatteryMonitor;
 import frc.lib.safety.FaultSupervisor;
 import frc.lib.util.FieldPositions;
 import frc.lib.util.LoggedTunableNumber;
@@ -130,6 +135,7 @@ public class RobotContainer {
   private final long bootDiskFingerprint;
   private final FaultSupervisor faultSupervisor;
   private final BatteryIO batteryIo;
+  private final BatteryMonitor batteryMonitor;
   private final VirtualBatterySim virtualBatterySim;
   private final ShotCalculator shotCalculator;
   private final PiecewiseSensitivity joystickSensitivity;
@@ -148,6 +154,7 @@ public class RobotContainer {
   private final PositionMechanism hood;
   private final Superstructure superstructure;
   private final boolean ghostSuperstructureActive;
+  private final Robot.Mode robotMode;
   private final boolean forceSimIo;
   private final LoggedDashboardChooser<Command> autoChooser;
   private final FluxFig.TuningBackend externalTuningBackend;
@@ -167,20 +174,38 @@ public class RobotContainer {
         identity,
         Filesystem.getDeployDirectory().toPath().resolve("configs"),
         null,
-        !RobotBase.isReal(),
+        RobotBase.isReal() ? Robot.Mode.REAL : Robot.Mode.SIM,
         null,
         null);
   }
 
   /** Deterministic constructor allowing explicit config directory and simulated IO selection. */
   public RobotContainer(RobotIdentity identity, Path configDir, boolean forceSimIo) {
-    this(identity, configDir, null, forceSimIo, null, null);
+    this(
+        identity,
+        configDir,
+        null,
+        forceSimIo ? Robot.Mode.SIM : Robot.Mode.REAL,
+        null,
+        null);
   }
 
   /** Constructor accepting a pre-loaded boot {@link FluxFig} snapshot to avoid duplicate disk loads. */
   public RobotContainer(
       RobotIdentity identity, Path configDir, FluxFig preloadedFluxFig, boolean forceSimIo) {
-    this(identity, configDir, preloadedFluxFig, forceSimIo, null, null);
+    this(
+        identity,
+        configDir,
+        preloadedFluxFig,
+        forceSimIo ? Robot.Mode.SIM : Robot.Mode.REAL,
+        null,
+        null);
+  }
+
+  /** Constructor accepting an explicit AdvantageKit {@link Robot.Mode} ({@code REAL}/{@code SIM}/{@code REPLAY}). */
+  public RobotContainer(
+      RobotIdentity identity, Path configDir, FluxFig preloadedFluxFig, Robot.Mode robotMode) {
+    this(identity, configDir, preloadedFluxFig, robotMode, null, null);
   }
 
   /**
@@ -194,9 +219,26 @@ public class RobotContainer {
       boolean forceSimIo,
       FluxFig.TuningBackend tuningBackend,
       Path tmpTunedSnapshotPath) {
+    this(
+        identity,
+        configDir,
+        preloadedFluxFig,
+        forceSimIo ? Robot.Mode.SIM : Robot.Mode.REAL,
+        tuningBackend,
+        tmpTunedSnapshotPath);
+  }
+
+  public RobotContainer(
+      RobotIdentity identity,
+      Path configDir,
+      FluxFig preloadedFluxFig,
+      Robot.Mode robotMode,
+      FluxFig.TuningBackend tuningBackend,
+      Path tmpTunedSnapshotPath) {
     this.identity = identity;
     this.configDir = configDir;
-    this.forceSimIo = forceSimIo;
+    this.robotMode = (robotMode != null) ? robotMode : Robot.Mode.SIM;
+    this.forceSimIo = (this.robotMode == Robot.Mode.SIM);
     this.externalTuningBackend = tuningBackend;
     this.fluxFig =
         (preloadedFluxFig != null) ? preloadedFluxFig : FluxFig.load(configDir, identity.name());
@@ -225,12 +267,25 @@ public class RobotContainer {
             || identity == RobotIdentity.CORAL
             || identity == RobotIdentity.CHASSIS_3;
 
+    double loopPeriodSec = Math.max(0.002, fluxFig.getInt("loopPeriodMs") / 1000.0);
     CameraSpec[] camConfigs =
         fluxFig.getCamerasForRobot(identity.name()).toArray(new CameraSpec[0]);
     this.cameraCount = camConfigs.length;
     this.faultSupervisor = new FaultSupervisor(Math.max(1, camConfigs.length));
-    this.batteryIo = new BatteryIO(fluxFig, fluxFig.getString("auxCanBus"));
     this.virtualBatterySim = new VirtualBatterySim(12.6, 0.015);
+    String auxCanBus = fluxFig.getString("auxCanBus");
+    this.batteryIo =
+        switch (this.robotMode) {
+          case REAL -> new BatteryIOBfgCan(auxCanBus);
+          case SIM -> new BatteryIOSim(auxCanBus, this.virtualBatterySim);
+          case REPLAY -> new BatteryIO() {
+            @Override
+            public String getAuxCanBus() {
+              return auxCanBus;
+            }
+          };
+        };
+    this.batteryMonitor = new BatteryMonitor(this.batteryIo, fluxFig);
     this.shotCalculator = ShotCalculator.fromFluxFig(fluxFig);
     double initialJoystickScale =
         fluxFig.hasParameter("joystickSensitivity")
@@ -248,28 +303,44 @@ public class RobotContainer {
             "Drive/RotationCurve", 0.09, 0.60, 0.10, 0.50, initialRotationScale);
 
     SwerveConfig swerveConfig = SwerveConfig.fromFluxFig(fluxFig, identity.name());
-    PhoenixOdometryThread.getInstance().setOdometryFrequencyHz(swerveConfig.odometryFrequencyHz());
-    GyroIO gyroIo;
+    GyroIO gyroIo = new GyroIO() {};
     ModuleIO[] moduleIos = new ModuleIO[4];
-    if (forceSimIo) {
-      gyroIo = new GyroIO() {};
-      for (int i = 0; i < 4; i++) {
-        moduleIos[i] = new ModuleIOSim(swerveConfig);
+    switch (this.robotMode) {
+      case REPLAY -> {
+        gyroIo = new GyroIO() {};
+        for (int i = 0; i < 4; i++) {
+          moduleIos[i] = new ModuleIO() {};
+        }
       }
-    } else {
-      PhoenixUtil.beginCanInitBudget();
-      gyroIo = new GyroIOPigeon2(swerveConfig.pigeonId(), swerveConfig.canBus());
-      for (int i = 0; i < 4; i++) {
-        moduleIos[i] = new ModuleIOTalonFX(swerveConfig, swerveConfig.corners()[i]);
+      case SIM -> {
+        ModuleIOSim[] simModules = new ModuleIOSim[4];
+        for (int i = 0; i < 4; i++) {
+          simModules[i] = new ModuleIOSim(swerveConfig, virtualBatterySim::terminalVoltageV);
+          simModules[i].setLoopPeriodSeconds(loopPeriodSec);
+          moduleIos[i] = simModules[i];
+        }
+        gyroIo = new GyroIOSim(swerveConfig, simModules, virtualBatterySim::terminalVoltageV);
+      }
+      case REAL -> {
+        PhoenixOdometryThread.getInstance().setOdometryFrequencyHz(swerveConfig.odometryFrequencyHz());
+        PhoenixUtil.beginCanInitBudget();
+        gyroIo = new GyroIOPigeon2(swerveConfig.pigeonId(), swerveConfig.canBus());
+        for (int i = 0; i < 4; i++) {
+          moduleIos[i] = new ModuleIOTalonFX(swerveConfig, swerveConfig.corners()[i]);
+        }
       }
     }
     this.drive = new Drive(swerveConfig, gyroIo, moduleIos);
-    this.drive.setLoopPeriodSeconds(fluxFig.getInt("loopPeriodMs") / 1000.0);
+    this.drive.setLoopPeriodSeconds(loopPeriodSec);
 
     VisionIO[] visionIos = new VisionIO[camConfigs.length];
     if (camConfigs.length > 0) {
       String visionBackend = fluxFig.getString("visionBackend");
-      if (forceSimIo) {
+      if (this.robotMode == Robot.Mode.REPLAY) {
+        for (int i = 0; i < camConfigs.length; i++) {
+          visionIos[i] = new VisionIO() {};
+        }
+      } else if (this.robotMode == Robot.Mode.SIM) {
         for (int i = 0; i < camConfigs.length; i++) {
           visionIos[i] = new VisionIOSim(camConfigs[i], drive::getPose);
         }
@@ -289,8 +360,8 @@ public class RobotContainer {
     this.vision = new Vision(drive::addVisionMeasurement, faultSupervisor, camConfigs, visionIos);
     this.preMatchCalibrator = new PreMatchCalibrator(drive, vision);
 
-    boolean useSimMechanisms = forceSimIo || ghostSuperstructureActive;
-    if (!useSimMechanisms) {
+    boolean useRealMechanisms = this.robotMode == Robot.Mode.REAL && !ghostSuperstructureActive;
+    if (useRealMechanisms) {
       // Refresh boot CAN retry budget after potentially slow AprilTagFieldLayout loading.
       PhoenixUtil.beginCanInitBudget();
     }
@@ -300,44 +371,32 @@ public class RobotContainer {
     MechanismSpec intakeSpec = fluxFig.getMechanismSpec(mechProfile, "Intake");
     this.intake =
         new VelocityMechanism(
-            useSimMechanisms ? new MechanismIOSim(intakeSpec) : new MechanismIOTalonFX(intakeSpec),
-            intakeSpec);
+            createMechanismIo(intakeSpec, useRealMechanisms, false, loopPeriodSec), intakeSpec);
 
     MechanismSpec tilterSpec = fluxFig.getMechanismSpec(mechProfile, "Tilter");
     this.tilter =
         new PositionMechanism(
-            useSimMechanisms ? new MechanismIOSim(tilterSpec) : new MechanismIOTalonFX(tilterSpec),
-            tilterSpec);
+            createMechanismIo(tilterSpec, useRealMechanisms, false, loopPeriodSec), tilterSpec);
 
     MechanismSpec indexerSpec = fluxFig.getMechanismSpec(mechProfile, "Indexer");
     this.indexer =
         new VelocityMechanism(
-            useSimMechanisms
-                ? new MechanismIOSim(indexerSpec)
-                : new MechanismIOTalonFX(indexerSpec),
-            indexerSpec);
+            createMechanismIo(indexerSpec, useRealMechanisms, false, loopPeriodSec), indexerSpec);
 
     MechanismSpec feederSpec = fluxFig.getMechanismSpec(mechProfile, "Feeder");
     this.feeder =
         new VelocityMechanism(
-            useSimMechanisms ? new MechanismIOSim(feederSpec) : new MechanismIOTalonFX(feederSpec),
-            feederSpec);
+            createMechanismIo(feederSpec, useRealMechanisms, false, loopPeriodSec), feederSpec);
 
     MechanismSpec shooterSpec = fluxFig.getMechanismSpec(mechProfile, "Shooter");
-    MechanismIO shooterIo =
-        useSimMechanisms
-            ? new MechanismIOSim(shooterSpec)
-            : new MechanismIOTalonFX(
-                shooterSpec,
-                shooterSpec.followerMotorId(),
-                shooterSpec.invertFollower(),
-                NeutralModeValue.Coast);
-    this.shooter = new VelocityMechanism(shooterIo, shooterSpec);
+    this.shooter =
+        new VelocityMechanism(
+            createMechanismIo(shooterSpec, useRealMechanisms, true, loopPeriodSec), shooterSpec);
 
     MechanismSpec hoodSpec = fluxFig.getMechanismSpec(mechProfile, "Hood");
     this.hood =
         new PositionMechanism(
-            useSimMechanisms ? new MechanismIOSim(hoodSpec) : new MechanismIOTalonFX(hoodSpec),
+            createMechanismIo(hoodSpec, useRealMechanisms, false, loopPeriodSec),
             hoodSpec,
             Superstructure.HOOD_TOLERANCE_ROT);
 
@@ -436,9 +495,61 @@ public class RobotContainer {
         "Pit System Check (20s)",
         createPitSystemCheckCommand().onlyIf(RobotContainer::isPitTestAllowed));
     autoChooser.addOption(
+        "Wheel Radius Characterization (Spin)",
+        DriveCommands.wheelRadiusCharacterization(drive).onlyIf(RobotContainer::isPitTestAllowed));
+    autoChooser.addOption(
+        "SysId Translation Quasistatic Fwd",
+        DriveCommands.sysIdTranslationQuasistatic(drive, SysIdRoutine.Direction.kForward)
+            .onlyIf(RobotContainer::isPitTestAllowed));
+    autoChooser.addOption(
+        "SysId Translation Quasistatic Rev",
+        DriveCommands.sysIdTranslationQuasistatic(drive, SysIdRoutine.Direction.kReverse)
+            .onlyIf(RobotContainer::isPitTestAllowed));
+    autoChooser.addOption(
+        "SysId Translation Dynamic Fwd",
+        DriveCommands.sysIdTranslationDynamic(drive, SysIdRoutine.Direction.kForward)
+            .onlyIf(RobotContainer::isPitTestAllowed));
+    autoChooser.addOption(
+        "SysId Translation Dynamic Rev",
+        DriveCommands.sysIdTranslationDynamic(drive, SysIdRoutine.Direction.kReverse)
+            .onlyIf(RobotContainer::isPitTestAllowed));
+    autoChooser.addOption(
+        "SysId Steer Quasistatic Fwd",
+        DriveCommands.sysIdSteerQuasistatic(drive, SysIdRoutine.Direction.kForward)
+            .onlyIf(RobotContainer::isPitTestAllowed));
+    autoChooser.addOption(
+        "SysId Steer Dynamic Fwd",
+        DriveCommands.sysIdSteerDynamic(drive, SysIdRoutine.Direction.kForward)
+            .onlyIf(RobotContainer::isPitTestAllowed));
+    autoChooser.addOption(
+        "SysId Rotation Quasistatic Fwd",
+        DriveCommands.sysIdRotationQuasistatic(drive, SysIdRoutine.Direction.kForward)
+            .onlyIf(RobotContainer::isPitTestAllowed));
+    autoChooser.addOption(
+        "SysId Rotation Dynamic Fwd",
+        DriveCommands.sysIdRotationDynamic(drive, SysIdRoutine.Direction.kForward)
+            .onlyIf(RobotContainer::isPitTestAllowed));
+    autoChooser.addOption(
         "15-Min Floor Blitz",
         createBlitz15MinCommand(Blitz15MinCmd.DEFAULT_CHECKPOINT_PATH)
             .onlyIf(RobotContainer::isPitTestAllowed));
+  }
+
+  private MechanismIO createMechanismIo(
+      MechanismSpec spec, boolean useRealHardware, boolean coastNeutral, double loopPeriodSec) {
+    if (robotMode == Robot.Mode.REPLAY) {
+      return new MechanismIO() {};
+    }
+    if (!useRealHardware) {
+      MechanismIOSim sim = new MechanismIOSim(spec);
+      sim.setLoopPeriodSeconds(loopPeriodSec);
+      return sim;
+    }
+    if (coastNeutral) {
+      return new MechanismIOTalonFX(
+          spec, spec.followerMotorId(), spec.invertFollower(), NeutralModeValue.Coast);
+    }
+    return new MechanismIOTalonFX(spec);
   }
 
   /** Pit, calibration, and homing triggers require non-FMS WPILib Test mode. */
@@ -783,7 +894,7 @@ public class RobotContainer {
 
     joystickSensitivity.pollTunables();
     rotationSensitivity.pollTunables();
-    batteryIo.periodic();
+    batteryMonitor.periodic();
 
     vision.setRobotOrientation(
         drive.getPose().getRotation(),
@@ -791,19 +902,24 @@ public class RobotContainer {
         preMatchCalibrator.isGyroSeeded(),
         drive.getMaxTiltRad());
 
-    double ghostSupplyAmps =
-        ghostSuperstructureActive ? superstructure.getTotalMechanismSupplyCurrentAmps() : 0.0;
+    double mechSupplyAmps =
+        (forceSimIo || ghostSuperstructureActive)
+            ? superstructure.getTotalMechanismSupplyCurrentAmps()
+            : 0.0;
     double simVBat =
-        virtualBatterySim.update(drive.getTotalSupplyCurrentAmps(), ghostSupplyAmps);
+        virtualBatterySim.update(drive.getTotalSupplyCurrentAmps(), mechSupplyAmps);
     double effectiveVBat =
-        selectEffectiveBatteryVoltage(
-            forceSimIo, RobotBase.isReal(), RobotController.getBatteryVoltage(), simVBat);
+        (robotMode == Robot.Mode.REPLAY && batteryMonitor.isConnected())
+            ? batteryMonitor.getVoltageVolts()
+            : selectEffectiveBatteryVoltage(
+                forceSimIo, RobotBase.isReal(), RobotController.getBatteryVoltage(), simVBat);
     double effectiveRintMohm =
         selectEffectiveRintMilliOhms(
-            batteryIo.isConnected(),
-            batteryIo.getInternalResistanceMilliOhms(),
-            batteryIo.getNominalRintMilliOhms());
-    faultSupervisor.updateBatteryProtection(effectiveVBat, effectiveRintMohm);
+            batteryMonitor.isConnected(),
+            batteryMonitor.getInternalResistanceMilliOhms(),
+            batteryMonitor.getNominalRintMilliOhms());
+    faultSupervisor.updateBatteryProtection(
+        effectiveVBat, effectiveRintMohm, drive.getLoopPeriodSeconds());
     drive.applyBatteryProtection(faultSupervisor);
 
     Logger.recordOutput("Superstructure/GhostModeActive", ghostSuperstructureActive);
@@ -881,6 +997,14 @@ public class RobotContainer {
 
   public BatteryIO getBatteryIo() {
     return batteryIo;
+  }
+
+  public BatteryMonitor getBatteryMonitor() {
+    return batteryMonitor;
+  }
+
+  public Robot.Mode getRobotMode() {
+    return robotMode;
   }
 
   public VirtualBatterySim getVirtualBatterySim() {

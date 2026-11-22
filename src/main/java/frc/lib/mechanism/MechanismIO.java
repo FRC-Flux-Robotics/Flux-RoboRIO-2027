@@ -58,6 +58,8 @@ public interface MechanismIO {
 
   default void setPID(double kP, double kI, double kD, double kS, double kV, double kG) {}
 
+  default void setLoopPeriodSeconds(double loopPeriodSec) {}
+
   default void stop() {}
 
   default boolean resetPosition() {

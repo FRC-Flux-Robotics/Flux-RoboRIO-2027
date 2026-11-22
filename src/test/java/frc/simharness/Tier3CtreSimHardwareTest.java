@@ -59,7 +59,12 @@ public class Tier3CtreSimHardwareTest {
   @BeforeAll
   public static void initHal() throws InterruptedException {
     assertTrue(HAL.initialize(500, 0), "WPILib HAL must initialize in headless Linux container");
-    SimHooks.stepTiming(0.020);
+    SimHooks.pauseTiming();
+    try {
+      SimHooks.stepTiming(0.020);
+    } finally {
+      SimHooks.resumeTiming();
+    }
     keepAliveTalon = new TalonFX(62, new CANBus("rio"));
     Unmanaged.feedEnable(100);
     Thread.sleep(200);
@@ -76,6 +81,7 @@ public class Tier3CtreSimHardwareTest {
 
   @AfterAll
   public static void closeKeepAlive() {
+    SimHooks.resumeTiming();
     PhoenixOdometryThread.getInstance().reset();
     PhoenixSignals.reset();
     if (keepAliveTalon != null) {
@@ -780,6 +786,73 @@ public class Tier3CtreSimHardwareTest {
           afterBoot.GyroTrim.GyroScalarZ,
           0.05,
           "GyroIOPigeon2 must preserve Tuner X flash GyroScalarZ trim on boot");
+    }
+  }
+
+  @Test
+  public void testClosingOneModuleDoesNotResetSharedOdometryThreadAndCouplingCompensates()
+      throws InterruptedException {
+    FluxFig fig = new FluxFig(Paths.get("src/main/deploy/configs"));
+    SwerveConfig baseCfg = SwerveConfig.fromFluxFig(fig, "FUEL");
+    SwerveConfig rioCfg =
+        new SwerveConfig(
+            "rio",
+            baseCfg.pigeonId(),
+            baseCfg.trackWidthMeters(),
+            baseCfg.wheelBaseMeters(),
+            baseCfg.wheelRadiusMeters(),
+            baseCfg.driveGearRatio(),
+            baseCfg.turnGearRatio(),
+            baseCfg.maxLinearSpeedMps(),
+            baseCfg.maxAngularSpeedRadPerSec(),
+            baseCfg.driveStatorLimitAmps(),
+            baseCfg.driveSupplyLimitAmps(),
+            baseCfg.driveSlipCurrentAmps(),
+            baseCfg.turnStatorLimitAmps(),
+            baseCfg.turnSupplyLimitAmps(),
+            baseCfg.driveKp(),
+            baseCfg.driveKi(),
+            baseCfg.driveKd(),
+            baseCfg.driveKs(),
+            baseCfg.driveKv(),
+            baseCfg.driveKa(),
+            baseCfg.turnKp(),
+            baseCfg.turnKd(),
+            baseCfg.corners(),
+            baseCfg.odometryFrequencyHz(),
+            4.5);
+
+    try (ModuleIOTalonFX modFl = new ModuleIOTalonFX(rioCfg, rioCfg.corners()[0])) {
+      try (ModuleIOTalonFX modFr = new ModuleIOTalonFX(rioCfg, rioCfg.corners()[1])) {
+        assertTrue(modFr.getDriveTalon() != null, "FR module must expose its drive TalonFX");
+        assertEquals(
+            8,
+            PhoenixOdometryThread.getInstance().getRegisteredSignals().size(),
+            "Two modules must register 8 odometry signals");
+      }
+      assertEquals(
+          4,
+          PhoenixOdometryThread.getInstance().getRegisteredSignals().size(),
+          "Closing modFr must unregister only its 4 signals without resetting modFl");
+
+      // Azimuth coupling check: +1.0 steer rotation induces +4.5 drive rotor rotations; net wheel
+      // displacement must cancel to ~0 rad after couplingRatio compensation.
+      modFl.getCancoder().getSimState().setRawPosition(1.0);
+      modFl.getTurnTalon().getSimState().setRawRotorPosition(1.0 * rioCfg.turnGearRatio());
+      modFl.getDriveTalon().getSimState().setRawRotorPosition(4.5);
+      Thread.sleep(25);
+      PhoenixOdometryThread.getInstance().sampleOnce(25.0);
+      PhoenixSignals.refreshAll();
+      ModuleIOInputs inputs = new ModuleIOInputs();
+      modFl.updateInputs(inputs);
+      assertTrue(
+          inputs.odometryTimestamps.length > 0,
+          "Remaining open module must continue receiving odometry timestamps after sibling closes");
+      double compensatedRad =
+          edu.wpi.first.math.util.Units.rotationsToRadians(
+              ModuleIOTalonFX.compensateDriveRotationsForAzimuth(
+                  4.5 / rioCfg.driveGearRatio(), 1.0, 4.5, rioCfg.driveGearRatio()));
+      assertEquals(0.0, compensatedRad, 1e-6, "Exact 4.5:1 azimuth coupling must cancel to 0 rad");
     }
   }
 }

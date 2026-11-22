@@ -10,8 +10,10 @@ import edu.wpi.first.math.util.Units;
 import edu.wpi.first.units.measure.Angle;
 import edu.wpi.first.units.measure.AngularVelocity;
 import edu.wpi.first.units.measure.Voltage;
+import edu.wpi.first.wpilibj.Timer;
 import frc.lib.util.PhoenixSignals;
 import frc.lib.util.PhoenixUtil;
+import java.util.List;
 import java.util.Queue;
 
 /**
@@ -77,46 +79,84 @@ public class GyroIOPigeon2 implements GyroIO, AutoCloseable {
   @Override
   public void updateInputs(GyroIOInputs inputs) {
     boolean telemetryOk = PhoenixSignals.isOK(signalGroup);
+    boolean canOk = telemetryOk && yaw.getStatus().isOK() && yawVelocity.getStatus().isOK();
+    double rawYawDeg = yaw.getValueAsDouble();
+    double rawYawVelDps = yawVelocity.getValueAsDouble();
+    double rawRollDeg = roll.getValueAsDouble();
+    double rawPitchDeg = pitch.getValueAsDouble();
+    double rawSupplyV = supplyVoltage.getValueAsDouble();
 
+    double[] drainedTimestamps;
+    double[] drainedYawRot;
     PhoenixOdometryThread.ODOMETRY_LOCK.lock();
     try {
-      boolean canOk = telemetryOk && yaw.getStatus().isOK() && yawVelocity.getStatus().isOK();
-      inputs.connected = canOk;
-
-      if (canOk || !hasOnboardImuFallback) {
-        inputs.usingOnboardFallback = false;
-        inputs.yawPosition = Rotation2d.fromDegrees(yaw.getValueAsDouble());
-        inputs.yawVelocityRadPerSec = Units.degreesToRadians(yawVelocity.getValueAsDouble());
-        inputs.rollRad = Units.degreesToRadians(roll.getValueAsDouble());
-        inputs.pitchRad = Units.degreesToRadians(pitch.getValueAsDouble());
-        inputs.supplyVoltageV = supplyVoltage.getValueAsDouble();
-      } else {
-        inputs.usingOnboardFallback = true;
-        inputs.yawPosition = new Rotation2d(fallbackYawRad);
-        inputs.yawVelocityRadPerSec = fallbackYawRateRadPerSec;
-      }
-
       int nTs = yawTimestampQueue.size();
-      inputs.odometryYawTimestamps = new double[nTs];
+      drainedTimestamps = new double[nTs];
       for (int i = 0; i < nTs; i++) {
         Double ts = yawTimestampQueue.poll();
-        inputs.odometryYawTimestamps[i] = (ts != null) ? ts : 0.0;
+        drainedTimestamps[i] = (ts != null) ? ts : 0.0;
       }
-
-      int n = yawPositionQueue.size();
-      inputs.odometryYawPositions = new Rotation2d[n];
-      for (int i = 0; i < n; i++) {
+      int nYaw = yawPositionQueue.size();
+      drainedYawRot = new double[nYaw];
+      for (int i = 0; i < nYaw; i++) {
         Double rot = yawPositionQueue.poll();
-        inputs.odometryYawPositions[i] =
-            (rot != null) ? Rotation2d.fromRotations(rot) : inputs.yawPosition;
+        drainedYawRot[i] = (rot != null) ? rot : (rawYawDeg / 360.0);
       }
     } finally {
       PhoenixOdometryThread.ODOMETRY_LOCK.unlock();
+    }
+
+    if (canOk) {
+      inputs.connected = true;
+      inputs.usingOnboardFallback = false;
+      inputs.yawPosition = Rotation2d.fromDegrees(rawYawDeg);
+      inputs.yawVelocityRadPerSec = Units.degreesToRadians(rawYawVelDps);
+      inputs.rollRad = Units.degreesToRadians(rawRollDeg);
+      inputs.pitchRad = Units.degreesToRadians(rawPitchDeg);
+      inputs.supplyVoltageV = rawSupplyV;
+      int n = Math.min(drainedTimestamps.length, drainedYawRot.length);
+      inputs.odometryYawTimestamps = new double[n];
+      inputs.odometryYawPositions = new Rotation2d[n];
+      for (int i = 0; i < n; i++) {
+        inputs.odometryYawTimestamps[i] = drainedTimestamps[i];
+        inputs.odometryYawPositions[i] = Rotation2d.fromRotations(drainedYawRot[i]);
+      }
+    } else if (hasOnboardImuFallback) {
+      inputs.connected = true;
+      inputs.usingOnboardFallback = true;
+      inputs.yawPosition = new Rotation2d(fallbackYawRad);
+      inputs.yawVelocityRadPerSec = fallbackYawRateRadPerSec;
+      if (drainedTimestamps.length > 0) {
+        double latestTs = drainedTimestamps[drainedTimestamps.length - 1];
+        inputs.odometryYawTimestamps = drainedTimestamps;
+        inputs.odometryYawPositions = new Rotation2d[drainedTimestamps.length];
+        for (int i = 0; i < drainedTimestamps.length; i++) {
+          double dtBack = latestTs - drainedTimestamps[i];
+          inputs.odometryYawPositions[i] =
+              new Rotation2d(fallbackYawRad - fallbackYawRateRadPerSec * dtBack);
+        }
+      } else {
+        inputs.odometryYawTimestamps = new double[] {Timer.getFPGATimestamp()};
+        inputs.odometryYawPositions = new Rotation2d[] {inputs.yawPosition};
+      }
+    } else {
+      inputs.connected = false;
+      inputs.usingOnboardFallback = false;
+      inputs.yawPosition = Rotation2d.fromDegrees(rawYawDeg);
+      inputs.yawVelocityRadPerSec = Units.degreesToRadians(rawYawVelDps);
+      inputs.rollRad = Units.degreesToRadians(rawRollDeg);
+      inputs.pitchRad = Units.degreesToRadians(rawPitchDeg);
+      inputs.supplyVoltageV = rawSupplyV;
+      inputs.odometryYawTimestamps = new double[0];
+      inputs.odometryYawPositions = new Rotation2d[0];
     }
   }
 
   @Override
   public void close() {
+    PhoenixOdometryThread.getInstance()
+        .unregisterConsumer(
+            List.of(yaw, yawVelocity), List.of(yawPositionQueue), yawTimestampQueue);
     pigeon.close();
   }
 }

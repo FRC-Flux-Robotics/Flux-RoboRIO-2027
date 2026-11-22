@@ -2,15 +2,18 @@ package frc.lib.commands;
 
 import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.controller.ProfiledPIDController;
-import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.math.trajectory.TrapezoidProfile;
+import edu.wpi.first.units.Units;
+import edu.wpi.first.units.measure.Voltage;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.Subsystem;
+import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine;
 import frc.lib.drive.Drive;
+import frc.lib.drive.SwerveConfig.CornerConfig;
 import frc.lib.util.FieldPositions;
 import frc.lib.util.PiecewiseSensitivity;
 import java.util.function.BooleanSupplier;
@@ -181,37 +184,135 @@ public final class DriveCommands {
   }
 
   /**
-   * Automated wheel-radius characterization command: rotates the chassis in place and logs the
-   * effective wheel radius in meters to {@code Drive/WheelRadiusCharacterizationMeters}.
+   * Automated spin-in-place wheel-radius characterization command: aligns modules, rotates slowly
+   * in place, integrates unwrapped gyro yaw delta against mean wheel angular displacement across
+   * all 4 swerve corners, and logs {@code Drive/WheelRadiusCharacterizationMeters}.
    */
   public static Command wheelRadiusCharacterization(Drive drive) {
-    final double[] startYawRad = new double[1];
-    final double[] accumTimeSec = new double[1];
+    final double omegaTargetRadPerSec = 1.0;
+    final double alignDwellSec = 0.50;
+    final double[] elapsedSec = new double[1];
+    final boolean[] baselineCaptured = new boolean[1];
+    final double[] startGyroYawRad = new double[1];
+    final double[][] startWheelPosRad = new double[1][];
+
+    double sumRadius = 0.0;
+    CornerConfig[] corners = drive.getConfig().corners();
+    for (CornerConfig corner : corners) {
+      sumRadius += corner.moduleTranslation().getNorm();
+    }
+    final double driveBaseRadiusMeters =
+        (corners.length > 0 && sumRadius > 1e-6) ? (sumRadius / corners.length) : 0.40;
+
     return Commands.run(
             () -> {
-              double omegaCmd = 1.5;
-              drive.runVelocity(new ChassisSpeeds(0.0, 0.0, omegaCmd));
-              accumTimeSec[0] += drive.getLoopPeriodSeconds();
-              Pose2d pose = drive.getPose();
-              double accumYaw = Math.abs(pose.getRotation().getRadians() - startYawRad[0]);
-              if (accumYaw > 0.25) {
-                double expectedYaw = omegaCmd * accumTimeSec[0];
-                double ratio = expectedYaw > 1e-3 ? accumYaw / expectedYaw : 1.0;
-                double estimatedRadius =
-                    drive.getConfig().wheelRadiusMeters()
-                        * Math.max(0.85, Math.min(1.15, ratio));
-                Logger.recordOutput(
-                    "Drive/WheelRadiusCharacterizationMeters", estimatedRadius);
+              double dt = drive.getLoopPeriodSeconds();
+              elapsedSec[0] += dt;
+              if (elapsedSec[0] < alignDwellSec) {
+                drive.runVelocity(new ChassisSpeeds(0.0, 0.0, 0.05));
+                return;
+              }
+              if (!baselineCaptured[0]) {
+                startGyroYawRad[0] = drive.getUnwrappedGyroYawRad();
+                startWheelPosRad[0] = drive.getWheelRadiusCharacterizationPositionsRad();
+                baselineCaptured[0] = true;
+              }
+              double ramp = Math.min(1.0, (elapsedSec[0] - alignDwellSec) / 0.50);
+              drive.runVelocity(new ChassisSpeeds(0.0, 0.0, omegaTargetRadPerSec * ramp));
+
+              double gyroDeltaRad = Math.abs(drive.getUnwrappedGyroYawRad() - startGyroYawRad[0]);
+              double[] currentWheelPosRad = drive.getWheelRadiusCharacterizationPositionsRad();
+              double wheelDeltaSum = 0.0;
+              int n = Math.min(currentWheelPosRad.length, startWheelPosRad[0].length);
+              for (int i = 0; i < n; i++) {
+                wheelDeltaSum += Math.abs(currentWheelPosRad[i] - startWheelPosRad[0][i]);
+              }
+              double avgWheelDeltaRad = (n > 0) ? (wheelDeltaSum / n) : 0.0;
+              Logger.recordOutput("Drive/WheelRadiusGyroDeltaRad", gyroDeltaRad);
+              Logger.recordOutput("Drive/WheelRadiusAvgWheelDeltaRad", avgWheelDeltaRad);
+
+              if (gyroDeltaRad > 0.50 && avgWheelDeltaRad > 0.50) {
+                double estimatedRadius = (gyroDeltaRad * driveBaseRadiusMeters) / avgWheelDeltaRad;
+                Logger.recordOutput("Drive/WheelRadiusCharacterizationMeters", estimatedRadius);
               }
             },
             drive)
         .beforeStarting(
             () -> {
-              startYawRad[0] = drive.getPose().getRotation().getRadians();
-              accumTimeSec[0] = 0.0;
+              elapsedSec[0] = 0.0;
+              baselineCaptured[0] = false;
+              startGyroYawRad[0] = drive.getUnwrappedGyroYawRad();
+              startWheelPosRad[0] = drive.getWheelRadiusCharacterizationPositionsRad();
               Logger.recordOutput(
                   "Drive/WheelRadiusCharacterizationMeters", drive.getConfig().wheelRadiusMeters());
             })
         .finallyDo(drive::stop);
+  }
+
+  /** Creates a WPILib {@link SysIdRoutine} for linear swerve translation (4 V dynamic cap). */
+  public static SysIdRoutine createTranslationSysIdRoutine(Drive drive) {
+    return new SysIdRoutine(
+        new SysIdRoutine.Config(
+            Units.Volts.of(1.0).per(Units.Second),
+            Units.Volts.of(4.0),
+            Units.Seconds.of(6.0),
+            state -> Logger.recordOutput("Drive/SysIdTranslationState", state.toString())),
+        new SysIdRoutine.Mechanism(
+            (Voltage volts) -> drive.runDriveCharacterization(volts.in(Units.Volts)),
+            null,
+            drive));
+  }
+
+  /** Creates a WPILib {@link SysIdRoutine} for swerve steer azimuth characterization (6 V cap). */
+  public static SysIdRoutine createSteerSysIdRoutine(Drive drive) {
+    return new SysIdRoutine(
+        new SysIdRoutine.Config(
+            Units.Volts.of(1.0).per(Units.Second),
+            Units.Volts.of(6.0),
+            Units.Seconds.of(6.0),
+            state -> Logger.recordOutput("Drive/SysIdSteerState", state.toString())),
+        new SysIdRoutine.Mechanism(
+            (Voltage volts) -> drive.runSteerCharacterization(volts.in(Units.Volts)),
+            null,
+            drive));
+  }
+
+  /** Creates a WPILib {@link SysIdRoutine} for in-place swerve rotation characterization (4 V cap). */
+  public static SysIdRoutine createRotationSysIdRoutine(Drive drive) {
+    return new SysIdRoutine(
+        new SysIdRoutine.Config(
+            Units.Volts.of(1.0).per(Units.Second),
+            Units.Volts.of(4.0),
+            Units.Seconds.of(6.0),
+            state -> Logger.recordOutput("Drive/SysIdRotationState", state.toString())),
+        new SysIdRoutine.Mechanism(
+            (Voltage volts) -> drive.runRotationCharacterization(volts.in(Units.Volts)),
+            null,
+            drive));
+  }
+
+  public static Command sysIdTranslationQuasistatic(
+      Drive drive, SysIdRoutine.Direction direction) {
+    return createTranslationSysIdRoutine(drive).quasistatic(direction).finallyDo(drive::stop);
+  }
+
+  public static Command sysIdTranslationDynamic(Drive drive, SysIdRoutine.Direction direction) {
+    return createTranslationSysIdRoutine(drive).dynamic(direction).finallyDo(drive::stop);
+  }
+
+  public static Command sysIdSteerQuasistatic(Drive drive, SysIdRoutine.Direction direction) {
+    return createSteerSysIdRoutine(drive).quasistatic(direction).finallyDo(drive::stop);
+  }
+
+  public static Command sysIdSteerDynamic(Drive drive, SysIdRoutine.Direction direction) {
+    return createSteerSysIdRoutine(drive).dynamic(direction).finallyDo(drive::stop);
+  }
+
+  public static Command sysIdRotationQuasistatic(Drive drive, SysIdRoutine.Direction direction) {
+    return createRotationSysIdRoutine(drive).quasistatic(direction).finallyDo(drive::stop);
+  }
+
+  public static Command sysIdRotationDynamic(Drive drive, SysIdRoutine.Direction direction) {
+    return createRotationSysIdRoutine(drive).dynamic(direction).finallyDo(drive::stop);
   }
 }
